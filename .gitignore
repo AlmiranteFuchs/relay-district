@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.relay/
+.env*
+*.blend1
+*.log
+.DS_Store
