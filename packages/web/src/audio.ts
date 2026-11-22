@@ -1,14 +1,27 @@
 import type { CombatEvent } from "../../shared/src/combat.ts";
 
+interface MusicStem {
+  source: AudioBufferSourceNode;
+  fader: GainNode;
+}
+
+const missionBeat = 60 / 136; // The route and fight stems share this tempo in scripts/score.mjs.
+const bedLevel = .78;
+
 export class GameAudio {
   enabled = false;
   private context?: AudioContext;
-  private gain?: GainNode;
+  private music?: GainNode;
+  private effects?: GainNode;
   private buffers = new Map<string, AudioBuffer>();
-  private beds = new Map<string, GainNode>();
+  private beds = new Map<string, MusicStem>();
   private loading?: Promise<void>;
   private place = "plaza";
   private active = false;
+  private playing = "";
+  private combatMix = false;
+  private downbeat = 0;
+  private resumeBedAt = 0;
   private lastHit = 0;
 
   async toggle() {
@@ -23,7 +36,7 @@ export class GameAudio {
     this.loading ??= this.load();
     try { await this.loading; }
     catch (error) { this.loading = undefined; this.enabled = false; await this.context.suspend(); throw error; }
-    this.mix(this.place, this.active);
+    this.updateScore();
   }
 
   private async load() {
@@ -34,49 +47,80 @@ export class GameAudio {
       if (!response.ok) throw new Error("Audio could not be loaded.");
       this.buffers.set(name, await audio.decodeAudioData(await response.arrayBuffer()));
     }));
-    this.gain = audio.createGain();
-    this.gain.gain.value = .65;
-    this.gain.connect(audio.destination);
-    const start = audio.currentTime + .05;
-    for (const name of ["plaza", "lane", "fight"]) {
-      const source = audio.createBufferSource();
-      const stem = audio.createGain();
-      stem.gain.value = 0;
-      source.buffer = this.buffers.get(name)!;
-      source.loop = true;
-      source.connect(stem).connect(this.gain);
-      source.start(start);
-      this.beds.set(name, stem);
-    }
+    this.music = audio.createGain();
+    this.music.gain.value = bedLevel;
+    this.music.connect(audio.destination);
+    this.effects = audio.createGain();
+    this.effects.gain.value = .72;
+    this.effects.connect(audio.destination);
   }
 
   mix(place: string, active: boolean) {
-    if (this.beds.size && place === this.place && active === this.active) {
-      const plaza = this.beds.get("plaza")!;
-      if (plaza.gain.value > 0.01 || this.beds.get("lane")!.gain.value > .01) return;
-    }
+    if (place === this.place && active === this.active) return;
     this.place = place;
     this.active = active;
-    if (!this.context) return;
-    for (const [name, stem] of this.beds) {
-      const value = name === "plaza" ? (place === "plaza" ? .66 : 0)
-        : name === "lane" ? (place === "mission" ? .61 : 0) : (place === "mission" && active ? .65 : 0);
-      stem.gain.setTargetAtTime(value, this.context.currentTime, .21);
+    this.updateScore();
+  }
+
+  private updateScore() {
+    const audio = this.context;
+    if (!audio || !this.music || !this.enabled) return;
+    const now = audio.currentTime;
+    const changedPlace = this.place !== this.playing;
+    if (changedPlace) {
+      for (const { source, fader } of this.beds.values()) {
+        fader.gain.cancelScheduledValues(now);
+        fader.gain.setTargetAtTime(0, now, .062);
+        source.stop(now + .4);
+      }
+      this.beds.clear();
+      this.playing = this.place;
+      this.downbeat = now + .04;
+      for (const name of this.place === "mission" ? ["lane", "fight"] : ["plaza"]) {
+        const source = audio.createBufferSource();
+        const fader = audio.createGain();
+        source.buffer = this.buffers.get(name)!;
+        source.loop = true;
+        fader.gain.value = 0;
+        source.connect(fader).connect(this.music);
+        source.onended = () => { source.disconnect(); fader.disconnect(); };
+        source.start(this.downbeat);
+        this.beds.set(name, { source, fader });
+      }
+    } else if (this.combatMix === this.active) return;
+    this.combatMix = this.active;
+    const beat = Math.max(0, Math.ceil((now + .012 - this.downbeat) / missionBeat));
+    const fadeAt = changedPlace ? this.downbeat : this.downbeat + beat * missionBeat;
+    for (const [name, { fader }] of this.beds) {
+      const level = name === "plaza" ? .88 : name === "lane" ? this.active ? .54 : .84 : this.active ? .86 : 0;
+      fader.gain.cancelScheduledValues(now);
+      fader.gain.setTargetAtTime(level, fadeAt, .092);
     }
+  }
+
+  private leaveRoomForCue(now: number, duration: number, gain: number) {
+    const bed = this.music?.gain;
+    if (!bed || this.resumeBedAt > now + duration) return;
+    this.resumeBedAt = now + duration;
+    bed.cancelScheduledValues(now);
+    bed.setTargetAtTime(gain, now, .023);
+    bed.setTargetAtTime(bedLevel, this.resumeBedAt, .21);
   }
 
   sound(type: CombatEvent["type"]) {
     const audio = this.context;
     const clip = this.buffers.get(type === "revive" ? "observe" : type);
-    if (!audio || !this.enabled || !clip || !this.gain) return;
+    if (!audio || !this.enabled || !clip || !this.effects) return;
     if (type === "hit") {
       if (audio.currentTime - this.lastHit < .055) return;
       this.lastHit = audio.currentTime;
     }
+    if (type === "windup") this.leaveRoomForCue(audio.currentTime, .26, .54);
+    if (type === "clear") this.leaveRoomForCue(audio.currentTime, 1.05, .42);
     const source = audio.createBufferSource();
     const channel = audio.createGain();
     source.buffer = clip; channel.gain.value = type === "windup" ? .67 : type === "hit" ? .55 : .47;
-    source.connect(channel).connect(this.gain);
+    source.connect(channel).connect(this.effects);
     source.start();
   }
 }

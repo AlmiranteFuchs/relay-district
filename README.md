@@ -41,8 +41,8 @@ In co-op, recall your companion with **Q** if it is armed, stand beside a downed
 
 - `npm test` runs the combat simulation, SQLite progression, and Colyseus room tests. The network tests connect real SDK clients and exercise the chapter and room lifecycle.
 - `npm run build` type-checks the workspaces and builds the browser release into `dist/`.
-- `npm run assets` regenerates the original score and effects.
-- `blender -b --factory-startup -t 2 --python scripts/models.py` regenerates the original GLB companions, weapons, player, and opponents. The built GLBs and WAVs are included for normal play.
+- `npm run assets` regenerates the original score and effects. The plaza cue is 24 bars at 112 BPM. The route and combat cues are aligned 24-bar stereo stems at 136 BPM.
+- `blender -b --factory-startup -t 2 --python scripts/models.py` regenerates the original GLB companions, weapons, player, and opponents. Add `-- --cast` for the courier and three enemies only. The built GLBs and WAVs are included for normal play.
 
 The shared TypeScript module owns combat timing and hit tests. Babylon.js renders and predicts local motion. The room server owns hits, enemy turns, party state, and rewards. Guest profile tokens are opaque, and SQLite grants each reward once per eligible run. Treat the LAN mode as a development build for trusted peers.
 

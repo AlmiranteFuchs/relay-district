@@ -15,6 +15,7 @@ export interface Axes { x: number; z: number }
 export interface Input extends Axes { seq: number; action?: Action }
 export interface Position { x: number; z: number; facing: number }
 export type EnemyKind = "skitter" | "guard" | "keeper" | "dummy";
+export const ENEMY_WINDUP_TICKS = { skitter: 32, guard: 38, keeper: 52, dummy: 1 } as const;
 export interface CombatEvent {
   type: "hit" | "swing" | "windup" | "arm" | "dodge" | "down" | "observe" | "revive" | "clear";
   source: string;
@@ -297,7 +298,7 @@ export function stepEnemy(
   if (Math.abs(dx) <= 1.44 * size && Math.abs(dz) <= 0.65 * size) {
     if (!canWindUp(nearest.id)) return;
     enemy.phase = "windup";
-    enemy.ticks = size === 1.5 ? 52 : size > 1 ? 38 : 32;
+    enemy.ticks = ENEMY_WINDUP_TICKS[enemy.kind];
     enemy.target = nearest.id;
     enemy.strikeX = nearest.x;
     enemy.strikeZ = nearest.z;

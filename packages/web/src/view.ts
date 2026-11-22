@@ -4,7 +4,7 @@ import {
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF/index.js";
 import { FORMS, type Family } from "../../shared/src/content.ts";
-import type { CombatEvent } from "../../shared/src/combat.ts";
+import { ENEMY_WINDUP_TICKS, type CombatEvent } from "../../shared/src/combat.ts";
 import type { Marker } from "../../shared/src/scene.ts";
 import { MothAnimation } from "./moth-animation.ts";
 
@@ -213,6 +213,52 @@ export class GameView {
     this.sign("SIGNAL 12", "RETURN ROUTE / MANUAL TURNOUT", 7.92, 1.62, 5.06, root, true);
   }
 
+  private stationWall() {
+    const material = this.material("Painted station wall", "#ffffff");
+    if (material.diffuseTexture) return material;
+    const texture = new DynamicTexture("Sealed concrete and enamel rails", { width: 256, height: 128 }, this.scene, true);
+    const ctx = texture.getContext();
+    const base = ctx.createLinearGradient(0, 0, 0, 128);
+    base.addColorStop(0, "#596d80"); base.addColorStop(.22, "#96a6b4");
+    base.addColorStop(.67, "#8294a1"); base.addColorStop(1, "#4c6779");
+    ctx.fillStyle = base; ctx.fillRect(0, 0, 256, 128);
+    for (let bay = 0; bay < 8; bay++) {
+      const x = bay * 32;
+      ctx.fillStyle = "#b9c9cc21"; ctx.fillRect(x + 1, 0, 12 + bay * 2, 128);
+      ctx.fillStyle = "#33495545"; ctx.fillRect(x, 0, 1, 128);
+      ctx.fillStyle = "#bed2d341"; ctx.fillRect(x + 1, 27, 30, 1);
+      ctx.fillStyle = "#2f4a5b36"; ctx.fillRect(x + 1, 100, 30, 1);
+      for (const anchor of [x + 4, x + 27]) {
+        ctx.fillStyle = "#49606a72"; ctx.fillRect(anchor, 95, 2, 2);
+        ctx.fillStyle = "#d0dbd56b"; ctx.fillRect(anchor, 95, 2, 1);
+      }
+    }
+    texture.update();
+    material.diffuseTexture = texture;
+    return material;
+  }
+
+  private stationGlass(cool: boolean) {
+    const material = this.material(cool ? "Frosted teal glazing" : "Frosted amber glazing", "#ffffff", true);
+    if (material.diffuseTexture) return material;
+    const texture = new DynamicTexture("Painted safety glass", { width: 128, height: 64 }, this.scene, true);
+    const ctx = texture.getContext();
+    const glass = ctx.createLinearGradient(0, 0, 0, 64);
+    glass.addColorStop(0, cool ? "#436b79" : "#9b623b");
+    glass.addColorStop(.32, cool ? "#8bb9b8" : "#dca574");
+    glass.addColorStop(.77, cool ? "#6fa7ab" : "#bd8351");
+    glass.addColorStop(1, cool ? "#325966" : "#784a35");
+    ctx.fillStyle = glass; ctx.fillRect(0, 0, 128, 64);
+    const reflection = ctx.createLinearGradient(0, 0, 128, 0);
+    reflection.addColorStop(0, "#fff2cc00"); reflection.addColorStop(.46, "#fff2cc29"); reflection.addColorStop(1, "#fff2cc00");
+    ctx.fillStyle = reflection; ctx.fillRect(0, 12, 128, 34);
+    for (const y of [7, 56]) { ctx.fillStyle = "#ffeed44a"; ctx.fillRect(0, y, 128, 1); }
+    texture.update();
+    material.diffuseTexture = texture;
+    material.emissiveColor = cool ? new Color3(.042, .116, .12) : new Color3(.13, .077, .031);
+    return material;
+  }
+
   private setPlace(world: WorldView, markers: Marker[]) {
     const id = world.kind + world.mission + world.stage + (world.status === "lobby" ? "lobby" : "");
     if (this.place === id) return;
@@ -225,7 +271,7 @@ export class GameView {
     const night = world.mission === "night";
     const junction = world.mission === "return";
     const relay = junction || world.stage === 1 || world.mission === "transformer";
-    const panel = this.material("slate", "#8297a5");
+    const panel = this.stationWall();
     const inset = this.material("inset", "#46586b");
     const beam = this.material("painted blue", "#4b647d");
     const darker = this.material("steel trim", "#364756");
@@ -273,7 +319,7 @@ export class GameView {
     }
     for (const x of [-8, -2.65, 2.65, 8.05]) {
       this.mesh("Window recess", [4.53, 2.18, .14], [x, 2.65, 5.34], darker, root);
-      this.mesh("Colored safety glass", [4.29, 1.93, .15], [x, 2.65, 5.22], night ? inset : plaza || !relay ? amber : cyan, root);
+      this.mesh("Colored safety glass", [4.29, 1.93, .15], [x, 2.65, 5.22], night ? inset : this.stationGlass(!plaza && relay), root);
       for (const dx of [-.76, .76]) this.mesh("Window divider", [.09, 1.93, .13], [x + dx, 2.65, 5.09], inset, root);
       this.mesh("Overhead light", [2.05, .117, .24], [x, 3.99, 5.09], tube, root);
       this.mesh("Safety rail", [3.82, .057, .067], [x, .89, 4.74], chrome, root);
@@ -529,11 +575,27 @@ export class GameView {
       if (actor.phase === "mastery") weapon.node.rotation.x = progress * 1.75;
       else weapon.node.rotation.x = 0;
     } else {
-      set("leg_near", walk * .34, 0);
-      set("leg_far", -walk * .34, 0);
-      set("plate_near", Math.sin(t * 3) * .09 + (actor.phase === "windup" ? -.31 : .12), 0);
-      set("plate_far", -Math.sin(t * 3) * .09 + (actor.phase === "windup" ? .31 : -.12), 0);
-      set("organism", 0, actor.phase === "active" ? .33 : actor.phase === "windup" ? -.27 : Math.sin(t * 4) * .044);
+      const crawler = actor.kind === "skitter";
+      const keeper = actor.kind === "keeper";
+      const windup = ENEMY_WINDUP_TICKS[keeper ? "keeper" : crawler ? "skitter" : "guard"];
+      const draw = actor.phase === "windup" ? Math.min(1, 1 - actor.age / windup) ** .76 : 0;
+      const release = actor.phase === "active" ? Math.min(actor.age / 3, 1) : 0;
+      const settling = actor.phase === "recover" ? Math.min(actor.age / 40, 1) : 0;
+      const recoil = actor.phase === "hurt" ? Math.min(actor.age / 11, 1) : 0;
+      const sway = Math.sin(t * (crawler ? 8 : 4));
+      set("organism", 0, sway * .046 + draw * (crawler ? .34 : .28) - release * .36 - settling * .21 + recoil * .25);
+      for (const [suffix, side] of [["near", -1], ["far", 1]] as const) {
+        const leg = walk * side;
+        set("leg_" + suffix, leg * .12, leg * (crawler ? .21 : .32) - draw * side * .1);
+        const wing = (crawler ? .31 : keeper ? .48 : -.52) * draw;
+        set("plate_" + suffix, side * (sway * .035 + wing + release * .21), draw * .14 - release * .28);
+        const claw = parts.get("claw_" + suffix);
+        if (claw) {
+          const angle = crawler ? -.32 : keeper ? .98 : .52;
+          claw.rotation.set(side * draw * .13, side * (draw * .45 - release * .28),
+            draw * angle - release * .33 - settling * .16 + sway * .06);
+        }
+      }
     }
   }
 

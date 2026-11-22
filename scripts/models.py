@@ -2,6 +2,7 @@
 
 Blender background mode: blender -b -t 2 --python scripts/models.py
 One companion and weapon: blender -b -t 2 --python scripts/models.py -- --pair moth
+Mission cast only: blender -b -t 2 --python scripts/models.py -- --cast
 """
 
 import argparse
@@ -11,6 +12,9 @@ import sys
 from pathlib import Path
 import bpy
 from mathutils import Vector
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gameplay_meshes import ENEMY_MESHES, build_courier, build_enemy
 
 
 OUT = Path(__file__).resolve().parents[1] / "packages/web/public/models"
@@ -90,45 +94,9 @@ def export(name):
                              export_cameras=False, export_lights=False, export_texcoords=True)
 
 
-jacket = material("Rust nylon", (.35, .13, .052))
-cream = material("Cream seams", (.64, .52, .34))
-denim = material("Midnight cargo", (.038, .057, .086))
-skin = material("Skin diffuse", (.57, .31, .18))
-hair = material("Hair diffuse", (.065, .034, .028))
-rubber = material("Charcoal tread", (.095, .094, .098))
-
-
 def courier():
     clear()
-    core = root("courier")
-    chest = root("torso", (0, 0, .99), core)
-    oval("track jacket", (.019, 0, .245), (.181, .261, .291), jacket, chest, 12, 8)
-    oval("waistband", (.016, 0, .048), (.158, .218, .103), denim, chest)
-    rod("zipper", (.19, 0, .12), (.17, 0, .46), .011, .011, cream, chest, 5)
-    oval("collar", (.027, 0, .477), (.107, .105, .055), cream, chest)
-    head = root("head", (.055, 0, .47), chest)
-    rod("neck", (0, 0, -.014), (.005, 0, .11), .068, .068, skin, head)
-    oval("head mesh", (.036, 0, .226), (.119, .097, .143), skin, head, 12, 8)
-    oval("hair crown", (.008, 0, .286), (.137, .108, .108), hair, head, 12, 6, -.12)
-    oval("swept fringe", (.098, -.035, .275), (.08, .079, .058), hair, head, 9, 6, .38)
-    oval("nose", (.143, 0, .208), (.023, .028, .025), skin, head, 8, 5)
-    for suffix, sign in (("near", -1), ("far", 1)):
-        oval("eye " + suffix, (.119, sign * .059, .238), (.016, .012, .008), hair, head, 8, 5)
-        arm = root("arm_" + suffix, (.023, sign * .231, .38), chest)
-        oval("jacket shoulder", (0, 0, -.06), (.105, .093, .119), jacket, arm)
-        rod("upper sleeve", (.007, 0, -.025), (.02, 0, -.29), .092, .068, jacket, arm)
-        rod("sleeve piping", (.013, sign * .086, -.054), (.025, sign * .064, -.257), .012, .012, cream, arm, 5)
-        elbow = root("elbow_" + suffix, (.019, 0, -.277), arm)
-        rod("forearm sleeve", (0, 0, 0), (.012, 0, -.208), .071, .053, jacket, elbow)
-        oval("cuff", (.011, 0, -.205), (.065, .062, .036), cream, elbow)
-        oval("hand", (.018, 0, -.266), (.065, .046, .082), skin, elbow)
-        leg = root("leg_" + suffix, (-.021, sign * .131, 1.02), core)
-        rod("trouser thigh", (0, 0, 0), (.024, 0, -.425), .131, .094, denim, leg)
-        oval("cargo pocket", (-.009, sign * .09, -.17), (.09, .051, .104), denim, leg)
-        knee = root("knee_" + suffix, (.023, 0, -.419), leg)
-        rod("trouser shin", (0, 0, 0), (-.025, 0, -.414), .088, .064, denim, knee)
-        oval("trainer sole", (.055, 0, -.508), (.175, .094, .043), cream, knee, 10, 5)
-        oval("trainer upper", (.039, 0, -.48), (.163, .087, .067), rubber, knee, 10, 5)
+    build_courier()
     export("courier")
 
 
@@ -136,9 +104,6 @@ palette = {
     "brick": ((.42, .183, .133), (.94, .54, .20)),
     "heron": ((.173, .216, .41), (.40, .58, .96)),
     "boar": ((.28, .11, .09), (.9, .343, .105)),
-    "skitter": ((.26, .24, .09), (.81, .49, .13)),
-    "guard": ((.29, .12, .141), (.88, .36, .32)),
-    "keeper": ((.172, .217, .27), (.74, .295, .16)),
 }
 biotissue = material("Violet muscle", (.185, .063, .11), .62)
 edge = material("Warm enamel", (.59, .49, .31), .68)
@@ -197,15 +162,17 @@ def creature(family, size=1):
         kite_moth(size)
         export(family)
         return
+    if family in ENEMY_MESHES:
+        build_enemy(family, size)
+        export(family)
+        return
     color, glow = palette[family]
     shell = material(family + " chitin", color, .59)
     organ = material(family + " living core", glow, .42, paint=False, luminous=True)
     body = root("creature", (0, 0, 0))
     body.scale = (size,) * 3
     hull = root("organism", (.015, 0, .37), body)
-    scale = {"brick": (.38, .31, .31), "heron": (.29, .19, .24),
-             "boar": (.48, .31, .29), "skitter": (.42, .29, .25),
-             "guard": (.42, .35, .38), "keeper": (.36, .42, .53)}[family]
+    scale = {"brick": (.38, .31, .31), "heron": (.29, .19, .24), "boar": (.48, .31, .29)}[family]
     oval("living abdomen", (-.035, 0, .11), scale, biotissue, hull, 12, 8)
     oval("main shell", (-.10, 0, .19), tuple(v * 1.08 for v in scale), shell, hull, 12, 8, -.14)
     oval("pulse_core", (scale[0] - .012, 0, .133), (.103, .158, .109), organ, hull, 12, 8)
@@ -225,10 +192,6 @@ def creature(family, size=1):
         oval("ankle " + suffix, elbow, (.068, .058, .062), shell, leg)
         rod("shin " + suffix, elbow, (.015, .17 * sign, -.3), .054, .032, shell, leg)
         oval("toe " + suffix, (.06, .17 * sign, -.30), (.096, .057, .042), edge, leg)
-    if family == "keeper":
-        for sign in (-1, 1):
-            rod("long keeper tendril", (0, sign * .27, .34), (.2, sign * .65, .045), .10, .041, shell, hull)
-            oval("tendril gland", (.21, sign * .64, .02), (.107, .074, .098), organ, hull)
     export(family)
 
 
@@ -315,19 +278,23 @@ def portrait(family):
 def generate():
     families = ("moth", "brick", "heron", "boar")
     parser = argparse.ArgumentParser(description="Generate Relay District GLB assets")
-    parser.add_argument("--pair", choices=families, help="Export only the creature and weapon GLBs for this family")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--pair", choices=families, help="Export only the creature and weapon GLBs for this family")
+    selection.add_argument("--cast", action="store_true", help="Export only the courier and mission enemies")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
     if args.pair:
         creature(args.pair)
         weapon(args.pair)
         return
     courier()
+    for name, size in (("skitter", 1.38), ("guard", 1.65), ("keeper", 2.37)):
+        creature(name, size)
+    if args.cast:
+        return
     for name in families:
         creature(name)
         portrait(name)
         weapon(name)
-    for name, size in (("skitter", 1.38), ("guard", 1.65), ("keeper", 2.37)):
-        creature(name, size)
 
 
 if __name__ == "__main__":
