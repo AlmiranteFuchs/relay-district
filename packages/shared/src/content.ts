@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement";
+export type Lore = "plaque" | "log" | "announcement" | "register";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -107,12 +107,18 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "If your partner can still hear me, let it choose. Close the crossing while the signal is green. Please tell the city we were still here.",
     hint: "The damaged speaker in the relay room",
   },
+  register: {
+    title: "Return register • Platform 07",
+    text: "Mara, 23:49. Last evacuation car departed with twelve aboard. Partners stayed at the far platform. Keep one return path open. At 00:00 someone stamped EMPTY across all twelve names.",
+    hint: "Open the conductor’s register on the night platform",
+  },
 };
 
-export const JOBS: Record<Mission, { title: string; description: string; reward?: Family }> = {
+export const JOBS: Record<Mission, { title: string; description: string; reward?: Family; clearLore?: Lore; requiresChapter?: boolean }> = {
   chapter: { title: "The Last Crossing", description: "Trace the fare token to a line sealed since 1999.", reward: "brick" },
-  platform: { title: "Platform Sweep", description: "Clear a crowded platform and trace the Glass Heron signal.", reward: "heron" },
-  transformer: { title: "Transformer Trial", description: "Break through the substation's guard and trace Cinder Boar.", reward: "boar" },
+  night: { title: "The Night Platform", description: "Follow the train from the sealed line to its last recorded stop.", clearLore: "register", requiresChapter: true },
+  platform: { title: "Platform Sweep", description: "Clear a crowded platform and trace the Glass Heron signal.", reward: "heron", requiresChapter: true },
+  transformer: { title: "Transformer Trial", description: "Break through the substation's guard and trace Cinder Boar.", reward: "boar", requiresChapter: true },
   training: { title: "Practice floor", description: "Try a discovered form or complete the equipped form's mastery drill." },
 };
 

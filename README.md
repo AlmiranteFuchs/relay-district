@@ -23,13 +23,17 @@ Run `npm run dev:lan` to allow players on the same trusted network to open your 
 | Q | Arm or recall the companion |
 | J / K / L | Basic chain, signature skill, mastery follow-up |
 | Space / Shift | Jump and directional dodge |
-| E / Esc | Use the nearby station or clue, close a panel |
+| E / Esc | Use the nearby station or clue, rescue a downed teammate, close a panel |
 
 Start with Kite Moth and its coil staff. Clear the first chapter, listen at the final relay, then return to the plaza. Use **E** near the Morph Workbench to preview Brickback or spend the first catalyst to change form. Platform Sweep and Transformer Trial reveal Glass Heron and Cinder Boar.
+
+After The Last Crossing, Dispatch opens **The Night Platform**, the next story mission. Follow the arriving train, clear the platform, then recall your companion with **Q** and inspect the return register. Everyone in the room receives the memory in their companion journal.
 
 The companion keeps its name, personality, bond, trinket, room theme, memories, former forms, and mastery records through a morph. Battle XP starts at zero for the new form. Its basic chain and signature skill are available immediately. Complete a mastery drill and reach rank three to use the follow-up. Earn another catalyst by clearing two distinct missions and carry one at a time.
 
 In the companion room, rename your partner, decorate its room, choose a keepsake, and play together. Inspect the closure plaque, maintenance log, and broken announcement to record the history of the Last Crossing. Open Sound to hear the original score and gameplay cues.
+
+In co-op, recall your companion with **Q** if it is armed, stand beside a downed teammate, and press **E**. Stay still for 1.2 seconds while your companion revives them with 40 HP. Taking a hit, moving, or using another action interrupts the rescue. Each courier can receive one rescue per run.
 
 ## Development
 

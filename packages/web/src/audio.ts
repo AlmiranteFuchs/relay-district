@@ -67,7 +67,7 @@ export class GameAudio {
 
   sound(type: CombatEvent["type"]) {
     const audio = this.context;
-    const clip = this.buffers.get(type);
+    const clip = this.buffers.get(type === "revive" ? "observe" : type);
     if (!audio || !this.enabled || !clip || !this.gain) return;
     if (type === "hit") {
       if (audio.currentTime - this.lastHit < .055) return;

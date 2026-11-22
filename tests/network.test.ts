@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client, type Room } from "@colyseus/sdk";
+import { matchMaker } from "@colyseus/core";
 import { runServer } from "../packages/server/src/http.ts";
+import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
 import type { Action, Family, Mission, Profile } from "../packages/shared/src/content.ts";
-import type { CombatEvent } from "../packages/shared/src/combat.ts";
+import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -144,6 +146,129 @@ async function fight(couriers: TestCourier[], status: string, timeout = 36000) {
   }
   assert.equal(hub.state.status, status, "fight reached the expected phase");
 }
+
+test("a recalled companion can rescue a courier once, with the server confirming the result to both players", { timeout: 16000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:", latency: 100 });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta] = await Promise.all([player(origin, "Aster"), player(origin, "Mara")]);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "chapter" }) as Socket);
+    rooms.push(first);
+    const other = connectHandlers(await beta.sdk.joinById(first.roomId) as Socket);
+    rooms.push(other);
+    await Promise.all([local(first), local(other)]);
+    const confirmations: CombatEvent[][] = [[], []];
+    for (const [index, connection] of rooms.entries()) {
+      connection.onMessage("combat", (event: CombatEvent) => {
+        if (event.type === "revive") confirmations[index].push(event);
+      });
+    }
+    first.send("begin");
+    await until("chapter entry", () => first.state.status === "approach");
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    const helper = mission["players"].get(first.sessionId)!.player;
+    const casualty = mission["players"].get(other.sessionId)!.player;
+    // Seed a downed teammate between waves so no AI timing affects the interaction checks.
+    mission.state.status = "interlude";
+    Object.assign(helper, { x: -5, z: 0 });
+    Object.assign(casualty, { x: -1, z: 0, hp: 0 });
+    const a = new TestCourier(first), b = new TestCourier(other);
+    await until("downed courier replicated", () => b.me.hp === 0);
+
+    first.send("interact");
+    await delay(220);
+    assert.equal(a.me.rescueTarget, "", "out-of-range rescues are rejected");
+    await a.go(-1.9, 0);
+    a.send(0, 0, "morph");
+    await until("helper armed", () => a.me.armed);
+    first.send("interact");
+    await delay(220);
+    assert.equal(a.me.rescueTarget, "", "an armed companion cannot assist");
+    a.send(0, 0, "morph");
+    await until("helper recalled", () => !a.me.armed);
+
+    first.send("interact");
+    await until("channel visible to both players", () => a.me.rescueTicks > 0 && other.state.actors.get(first.sessionId)?.rescueTarget === other.sessionId);
+    a.send(0, 1);
+    await until("movement interrupted the rescue", () => a.me.rescueTarget === "");
+    assert.equal(b.me.hp, 0);
+    a.send(0, 0);
+    await until("helper stationary", () => a.me.ack === a.seq && !a.me.moving);
+
+    first.send("interact");
+    await until("rescue is replicated", () => b.me.hp === RESCUE_HEALTH && b.me.rescued
+      && first.state.actors.get(other.sessionId)?.hp === RESCUE_HEALTH);
+    await until("both clients receive the rescue event", () => confirmations.every((events) => events.length === 1));
+    const expected = { type: "revive", source: first.sessionId, target: other.sessionId, x: -1, z: 0 };
+    assert.deepEqual(confirmations, [[expected], [expected]]);
+
+    casualty.hp = 0;
+    await until("courier downed again", () => b.me.hp === 0);
+    first.send("interact");
+    await delay(220);
+    assert.equal(a.me.rescueTarget, "", "the same courier can only be rescued once per run");
+    assert.equal(b.me.hp, 0);
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    server.game.simulateLatency(0);
+    await server.stop();
+  }
+});
+
+test("the night platform unlocks after the chapter and records the register for the whole party", { timeout: 40000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all([player(origin, "Aster"), player(origin, "Mara"), player(origin, "Guest")]);
+    await assert.rejects(alpha.sdk.create("mission", { mission: "night" }), /Clear The Last Crossing/);
+    for (const account of [alpha, beta]) {
+      const session = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([session.id], "chapter-unlock", "chapter");
+    }
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "night" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear The Last Crossing/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+    const a = new TestCourier(first), b = new TestCourier(other);
+    first.send("begin");
+    await until("platform arrival", () => first.state.status === "approach" && other.state.status === "approach");
+    assert.equal(first.state.actors.size, 2);
+    await Promise.all([a.go(-1.9, 0), b.go(-2.6, .65)]);
+    await fight([a, b], "signal", 26000);
+    for (const account of [alpha, beta]) assert.equal((await account.profile()).clears.includes("night"), false);
+
+    const reader = a.me.hp > 0 ? a : b;
+    await reader.go(8.25, 2.25);
+    if (!reader.me.armed) reader.send(0, 0, "morph");
+    await until("reader has their weapon armed", () => reader.me.armed);
+    let blocked = false;
+    reader.room.onMessage("notice", (message: string) => { blocked ||= message.includes("Recall your partner"); });
+    reader.room.send("interact");
+    await until("register asks for the recalled companion", () => blocked);
+    assert.equal(first.state.status, "signal");
+    reader.send(0, 0, "morph");
+    await until("partner is recalled", () => !reader.me.armed && reader.me.phase === "idle");
+    reader.room.send("interact");
+    await until("both clients see the mission clear", () => first.state.status === "complete" && other.state.status === "complete");
+    for (const account of [alpha, beta]) {
+      const profile = await account.profile();
+      assert.deepEqual(profile.clears, ["chapter", "night"]);
+      assert.deepEqual(profile.lore, ["register"]);
+      assert.deepEqual(profile.discovered, ["moth", "brick"]);
+      assert.equal(profile.companion, "Neri");
+      assert.equal(profile.battleXp, 112);
+    }
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
 
 test("two players clear the chapter, see identical hit confirms, and keep rewards", { timeout: 85000 }, async () => {
   const server = await runServer({ port: 0, database: ":memory:" });

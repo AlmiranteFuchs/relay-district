@@ -11,6 +11,7 @@ export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
   kind: string; hp: number; maxHp: number; energy: number; armed: boolean; connected: boolean;
   phase: string; age: number; duration: number; combo: number; step: number; ack: number; moving: boolean; rank: number;
+  rescued: boolean; rescueTarget: string; rescueTicks: number;
 }
 export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
@@ -136,6 +137,56 @@ export class GameView {
     plane.parent = root; plane.position.set(x, y, z); plane.material = mat;
   }
 
+  private nightPlatform(root: TransformNode) {
+    const enamel = this.material("Carriage enamel", "#ffffff");
+    if (!enamel.diffuseTexture) {
+      const paint = new DynamicTexture("Weathered carriage enamel", { width: 256, height: 64 }, this.scene, false, 1);
+      const ctx = paint.getContext();
+      const wash = ctx.createLinearGradient(0, 4, 0, 64);
+      wash.addColorStop(0, "#a8a990"); wash.addColorStop(.3, "#bdbca0"); wash.addColorStop(1, "#797f70");
+      ctx.fillStyle = wash; ctx.fillRect(0, 0, 256, 64);
+      for (let x = 4; x < 256; x += 16) {
+        ctx.fillStyle = "#39423830"; ctx.fillRect(x, 0, 1, 64);
+        ctx.fillStyle = "#463d2a32"; ctx.fillRect(x + 3, 7, 2, 9 + x % 23);
+        ctx.fillStyle = "#e5ddae67"; ctx.fillRect(x + 1, 2, 1, 5);
+      }
+      paint.update();
+      enamel.diffuseTexture = paint;
+    }
+    const blue = this.material("Carriage blue", "#395771");
+    const silver = this.material("Window beading", "#777f7d", true);
+    const glass = this.material("Unlit carriage glass", "#243740", true);
+    const skirt = this.material("Carriage underframe", "#2c373f");
+    const lamps = this.material("Tail lamps", "#b56b4b");
+    const stencilPaint = this.material("Platform stencil paint", "#b9a575");
+    lamps.emissiveColor = Color3.FromHexString("#b55c36").scale(.8);
+    this.mesh("Carriage underframe", [18.9, .38, 1.03], [.25, .49, 5.35], skirt, root);
+    this.mesh("Carriage body", [18.9, 2.4, 1.03], [.25, 1.89, 5.35], enamel, root);
+    this.mesh("Enamel belt line", [18.93, .25, 1.05], [.25, 1.38, 5.35], blue, root);
+    const roof = MeshBuilder.CreateCylinder("Rolled carriage roof", { diameter: 1.07, height: 18.9, tessellation: 10 }, this.scene);
+    roof.parent = root; roof.position.set(.25, 3.05, 5.35); roof.rotation.z = Math.PI / 2;
+    roof.scaling.x = .47; roof.material = blue;
+    for (const x of [-8.2, -6.55, -3.85, -2.2, -.55, 2.15, 3.8, 6.5, 8.15]) {
+      this.mesh("Window seal", [1.34, .86, .06], [x, 2.3, 4.818], silver, root);
+      this.mesh("Smoked window", [1.24, .75, .05], [x, 2.3, 4.785], glass, root);
+      this.mesh("Window reflection", [1.12, .036, .014], [x, 2.55, 4.75], blue, root);
+    }
+    for (const x of [-5.2, .8, 5.15]) {
+      this.mesh("Door pocket", [1.12, 2.01, .09], [x, 1.74, 4.794], skirt, root);
+      for (const dx of [-.25, .25]) {
+        this.mesh("Sliding door", [.47, 1.96, .075], [x + dx, 1.74, 4.747], enamel, root);
+        this.mesh("Door light", [.23, .51, .035], [x + dx, 2.28, 4.694], glass, root);
+      }
+    }
+    for (const x of [-8.86, 9.35]) this.mesh("Tail lamp", [.19, .13, .06], [x, 1.13, 4.785], lamps, root);
+    this.sign("PLATFORM 07", "NIGHT SERVICE / CONDUCTOR ACCESS", -7.95, 3.58, 4.87, root);
+    this.sign("RETURN REGISTER", "END OF PLATFORM / AUTHORIZED ACCESS", 8.1, 3.58, 4.87, root, true);
+    for (let x = -10; x <= 10; x += .55) {
+      const stencil = this.mesh("Platform edge stencil", [.29, .016, .14], [x, .018, 4.24], stencilPaint, root);
+      stencil.rotation.y = -.38;
+    }
+  }
+
   private setPlace(world: WorldView, markers: Marker[]) {
     const id = world.kind + world.mission + world.stage + (world.status === "lobby" ? "lobby" : "");
     if (this.place === id) return;
@@ -145,6 +196,7 @@ export class GameView {
     this.labels.clear();
     const root = this.scenery = new TransformNode("District architecture", this.scene);
     const plaza = world.kind === "plaza";
+    const night = world.mission === "night";
     const relay = world.stage === 1 || world.mission === "transformer";
     const panel = this.material("slate", "#8297a5");
     const inset = this.material("inset", "#46586b");
@@ -158,11 +210,11 @@ export class GameView {
     cyan.emissiveColor = Color3.FromHexString("#4b928e").scale(.55);
     const tube = this.material("fixture tube", "#c4d6bc");
     tube.emissiveColor = Color3.FromHexString("#b2d7cc").scale(.75);
-    const ground = this.material("tile " + (plaza ? "plaza" : relay ? "relay" : "service"), "#ffffff");
+    const ground = this.material("tile " + (plaza ? "plaza" : night ? "night" : relay ? "relay" : "service"), "#ffffff");
     if (!ground.diffuseTexture) {
       const tex = new DynamicTexture("Hand-painted floor", { width: 512, height: 256 }, this.scene, true);
       const ctx = tex.getContext();
-      const base = plaza ? [86, 120, 130] : relay ? [71, 84, 104] : [88, 104, 122];
+      const base = plaza ? [86, 120, 130] : night ? [109, 111, 102] : relay ? [71, 84, 104] : [88, 104, 122];
       ctx.fillStyle = "#354551"; ctx.fillRect(0, 0, 512, 256);
       for (let row = 0; row < 4; row++) for (let col = 0; col < 8; col++) {
         const x = col * 64, y = row * 64;
@@ -194,20 +246,23 @@ export class GameView {
     }
     for (const x of [-8, -2.65, 2.65, 8.05]) {
       this.mesh("Window recess", [4.53, 2.18, .14], [x, 2.65, 5.34], darker, root);
-      this.mesh("Colored safety glass", [4.29, 1.93, .15], [x, 2.65, 5.22], plaza || !relay ? amber : cyan, root);
+      this.mesh("Colored safety glass", [4.29, 1.93, .15], [x, 2.65, 5.22], night ? inset : plaza || !relay ? amber : cyan, root);
       for (const dx of [-.76, .76]) this.mesh("Window divider", [.09, 1.93, .13], [x + dx, 2.65, 5.09], inset, root);
       this.mesh("Overhead light", [2.05, .117, .24], [x, 3.99, 5.09], tube, root);
       this.mesh("Safety rail", [3.82, .057, .067], [x, .89, 4.74], chrome, root);
       for (const dx of [-1.83, 0, 1.83]) this.mesh("Rail post", [.059, .91, .071], [x + dx, .45, 4.74], chrome, root);
     }
-    this.sign(plaza ? "REPAIR PLAZA" : relay ? "LINE 07" : "SERVICE ENTRY",
-      plaza ? "BOND REGISTRY / DISTRICT DISPATCH" : relay ? "SIGNAL AUTHORITY / PLATFORM SEALED" : "AUTHORIZED COURIERS / AUTUMN 2007",
-      -7.95, 3.02, 4.97, root, relay);
-    this.sign(plaza ? "DISTRICT TRANSIT" : "OUT OF SERVICE", plaza ? "SERVICE MAP / UPDATED 09.2007" : "CROSSING SUSPENDED / 17.10.1999",
-      7.92, 1.62, 5.06, root, !plaza);
+    if (night) this.nightPlatform(root);
+    else {
+      this.sign(plaza ? "REPAIR PLAZA" : relay ? "LINE 07" : "SERVICE ENTRY",
+        plaza ? "BOND REGISTRY / DISTRICT DISPATCH" : relay ? "SIGNAL AUTHORITY / PLATFORM SEALED" : "AUTHORIZED COURIERS / AUTUMN 2007",
+        -7.95, 3.02, 4.97, root, relay);
+      this.sign(plaza ? "DISTRICT TRANSIT" : "OUT OF SERVICE", plaza ? "SERVICE MAP / UPDATED 09.2007" : "CROSSING SUSPENDED / 17.10.1999",
+        7.92, 1.62, 5.06, root, !plaza);
+    }
     this.mesh("Circuit across the wall", [10, .05, .12], [2.5, 4.02, 4.93], chrome, root);
     const screenDark = this.material("CRT surround", "#304355");
-    for (const x of [-10.6, 2.1]) {
+    for (const x of night ? [] : [-10.6, 2.1]) {
       this.mesh("Service equipment", [1.38, 1.35, .56], [x, .68, 4.97], darker, root);
       this.mesh("Service screen", [.93, .45, .07], [x, 1.04, 4.66], screenDark, root);
       this.mesh("Sparse readout", [.56, .04, .082], [x, 1.08, 4.61], cyan, root);
@@ -226,8 +281,9 @@ export class GameView {
         lounge.scaling.set(1.02, .3, .73); lounge.position.set(marker.x, .59, marker.z);
         lounge.material = cyan; lounge.parent = root;
       } else {
+        const display = marker.id === "plaque" || marker.id === "register" ? amber : cyan;
         this.mesh(marker.id + " glass", gate ? [1.06, .18, .33] : [base[0] * .78, .065, .51],
-          [marker.x, gate ? 1.65 : base[1] + .02, marker.z], marker.id === "plaque" ? amber : cyan, root);
+          [marker.x, gate ? 1.65 : base[1] + .02, marker.z], display, root);
       }
       const ring = MeshBuilder.CreateTorus("Interaction locator", { diameter: 1.65, thickness: .035, tessellation: 24 }, this.scene);
       ring.parent = root; ring.material = cyan; ring.position.set(marker.x, .031, marker.z);
@@ -299,9 +355,14 @@ export class GameView {
   }
 
   react(event: CombatEvent) {
-    if (event.type === "observe" || event.type === "arm") {
+    if (event.type === "observe" || event.type === "arm" || event.type === "revive") {
       const visual = this.visuals.get(event.source);
       if (visual) visual.reaction = 1;
+      if (event.type === "revive") {
+        const label = makeLabel(this.layer, "revived");
+        label.textContent = "Rescued";
+        this.effects.push({ label, position: new Vector3(event.x, 1.12, event.z), time: 0, lasts: 1.1 });
+      }
       return;
     }
     if (event.type === "hit") {
@@ -356,7 +417,7 @@ export class GameView {
     this.effects.push({ mesh: ribbon, material: mat, position: Vector3.Zero(), time: 0, lasts: windup ? .61 : .18 });
   }
 
-  private pose(visual: Visual, actor: ViewActor, dt: number) {
+  private pose(visual: Visual, actor: ViewActor, dt: number, rescueTarget?: ViewActor) {
     if (visual.held > 0) { visual.held -= dt; if (visual.held > 0) return; }
     const body = visual.model.node;
     const t = this.clock;
@@ -382,9 +443,9 @@ export class GameView {
       const accent = move ? hitPose * styles[actor.family] : 0;
       const side = actor.step === 1 ? -1 : 1;
       set("torso", move ? side * accent * .19 : .018 * Math.sin(t * 3), accent * .13);
-      set("head", 0, actor.phase === "arm" ? .24 : -.04);
-      set("arm_near", move ? -side * accent * .25 : walk * .36, move ? accent + .42 : actor.armed ? .49 : -.17);
-      set("arm_far", move ? side * accent * .29 : -walk * .36, move ? .53 + accent * .65 : actor.armed ? .34 : .12);
+      set("head", 0, actor.phase === "arm" || rescueTarget ? .24 : -.04);
+      set("arm_near", move ? -side * accent * .25 : walk * .36, move ? accent + .42 : rescueTarget ? .96 : actor.armed ? .49 : -.17);
+      set("arm_far", move ? side * accent * .29 : -walk * .36, move ? .53 + accent * .65 : rescueTarget ? .61 : actor.armed ? .34 : .12);
       set("elbow_near", 0, move ? .73 + accent * .15 : .29);
       set("elbow_far", 0, move ? .67 : .34);
       set("leg_near", 0, walk * .46 + (actor.y > .18 ? .36 : move ? .19 : .04));
@@ -398,6 +459,11 @@ export class GameView {
       const point = new Vector3(visual.at.x + actor.facing * .45, visual.at.y + 1.17, visual.at.z -.11);
       creature.node.setEnabled(fold < .87 && actor.hp > 0);
       creature.node.position.copyFrom(Vector3.Lerp(follow, point, fold));
+      if (rescueTarget) {
+        const approach = Math.min(1, actor.rescueTicks / 18);
+        const shelter = new Vector3(rescueTarget.x, rescueTarget.y + .44 + Math.sin(t * 13) * .07, rescueTarget.z - .34);
+        creature.node.position.copyFrom(Vector3.Lerp(follow, shelter, approach));
+      }
       creature.node.scaling.setAll(mix(.9, .22, fold));
       creature.node.rotation.y = body.rotation.y;
       creature.node.rotation.z = .14 * Math.sin(t * 3.8) - fold * .45 + visual.reaction * .24;
@@ -412,7 +478,8 @@ export class GameView {
         const pulse = Math.max(0, 1 - Math.abs(beat - .15) * 17) + Math.max(0, .75 - Math.abs(beat - .31) * 14);
         const datum = organ.metadata ??= {};
         datum.baseScale ??= organ.scaling.clone();
-        organ.scaling.copyFrom(datum.baseScale).scaleInPlace(1 + .24 * pulse + .12 * visual.reaction);
+        const rescuePulse = rescueTarget ? .33 + .19 * Math.sin(t * 15) : 0;
+        organ.scaling.copyFrom(datum.baseScale).scaleInPlace(1 + .24 * pulse + .12 * visual.reaction + rescuePulse);
       }
       weapon.node.setEnabled(fold > .21 && actor.hp > 0);
       weapon.node.scaling.setAll(Math.max(.1, fold));
@@ -453,12 +520,16 @@ export class GameView {
         visual.model.node.position.copyFrom(visual.at);
         visual.shadow.position.x = visual.at.x; visual.shadow.position.z = visual.at.z;
         visual.shadow.isVisible = actor.hp > 0;
-        this.pose(visual, actor, dt);
-        visual.label.hidden = (id === self && world.kind === "mission") || !actor.hp;
+        this.pose(visual, actor, dt, world.actors.get(actor.rescueTarget));
+        const downed = world.kind === "mission" && actor.kind === "player" && !actor.hp;
+        visual.label.hidden = (id === self && world.kind === "mission") || (!actor.hp && !downed);
+        visual.label.classList.toggle("downed", downed);
         if (!visual.label.hidden) {
-          visual.labelText.data = actor.name + (!actor.connected ? " • reconnecting" : "");
+          const status = !actor.connected ? " • reconnecting" : downed ? " • downed" : "";
+          visual.labelText.data = actor.name + status;
           if (visual.bar) visual.bar.style.width = Math.max(0, actor.hp / actor.maxHp * 100) + "%";
-          this.project(visual.label, new Vector3(visual.at.x, visual.at.y + (actor.kind === "player" || actor.kind === "keeper" ? 2.06 : 1.34), visual.at.z));
+          const labelHeight = downed ? .88 : actor.kind === "player" || actor.kind === "keeper" ? 2.06 : 1.34;
+          this.project(visual.label, new Vector3(visual.at.x, visual.at.y + labelHeight, visual.at.z));
         }
       }
       for (const point of markers) {

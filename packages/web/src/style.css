@@ -77,6 +77,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .world-label .enemy-fill { display: block; width: 52px; height: 3px; margin: 3px auto 0; background: #743d45; outline: 1px solid #26303a; }
 .world-label .enemy-fill i { display: block; height: 100%; background: #f2aa7d; }
 .world-label.damage { color: #fff0d3; font-style: italic; font-size: 18px; }
+.world-label.downed { color: #ffb499; }
+.world-label.revived { color: #c9ffdd; font-size: 15px; }
 .prompt, .toast { position: absolute; left: 50%; transform: translateX(-50%); border-radius: 6px; background: #182d3ce8; border: 1px solid #8dacb0; padding: 8px 14px; font-size: 13px; max-width: min(600px, 87vw); text-align: center; }
 .prompt { bottom: 91px; color: #e3fbef; }
 .toast { top: 71px; color: #f6dfb6; }

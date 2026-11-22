@@ -14,6 +14,13 @@ function clean(value: string, max: number) {
   return value.trim().replace(/[\u0000-\u001f\u007f]/g, "").slice(0, max);
 }
 
+function addMemory(profile: Profile, lore: Lore) {
+  if (profile.lore.includes(lore)) return false;
+  profile.lore.push(lore);
+  profile.bond = Math.min(100, profile.bond + 2);
+  return true;
+}
+
 export function newProfile(name: string): Profile {
   return {
     name: clean(name, 20) || "Courier", companion: "Neri", family: "moth",
@@ -118,11 +125,7 @@ export class Store {
 
   discoverLore(id: string, lore: Lore) {
     const profile = this.profile(id);
-    if (!profile.lore.includes(lore)) {
-      profile.lore.push(lore);
-      profile.bond = Math.min(100, profile.bond + 2);
-      this.save(id, profile);
-    }
+    if (addMemory(profile, lore)) this.save(id, profile);
     return profile;
   }
 
@@ -151,8 +154,9 @@ export class Store {
           profile.bond = Math.min(100, profile.bond + 4);
         }
         profile.battleXp += mission === "chapter" ? 64 : 48;
-        const discovery = JOBS[mission].reward;
+        const { reward: discovery, clearLore } = JOBS[mission];
         if (discovery && !profile.discovered.includes(discovery)) profile.discovered.push(discovery);
+        if (clearLore) addMemory(profile, clearLore);
         if (!profile.catalyst) {
           if (!profile.catalystProgress.includes(mission)) profile.catalystProgress.push(mission);
           if ((first && mission === "chapter") || profile.catalystProgress.length >= MORPH_CLEARS) {

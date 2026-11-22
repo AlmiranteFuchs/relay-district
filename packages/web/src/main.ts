@@ -1,5 +1,5 @@
 import { Client, type Room } from "@colyseus/sdk";
-import { ARM_TICKS, DT, stepWalk, type CombatEvent, type Input } from "../../shared/src/combat.ts";
+import { ARM_TICKS, canRescueIn, DT, rescueDistance, RESCUE_RANGE, RESCUE_TICKS, stepWalk, type CombatEvent, type Input } from "../../shared/src/combat.ts";
 import { battleRank, FORMS, isFamily, JOBS, LORE, ROOM_THEMES, TRINKETS, type Action, type Family,
   type Mission, type Profile } from "../../shared/src/content.ts";
 import { nearestMarker, PLAZA, routeMarkers } from "../../shared/src/scene.ts";
@@ -111,6 +111,7 @@ function capture(state: Wire) {
       family: entry.family, kind: entry.kind, hp: entry.hp, maxHp: entry.maxHp, energy: entry.energy,
       armed: entry.armed, connected: entry.connected, phase: entry.phase, age: entry.age, duration: entry.duration,
       combo: entry.combo, step: entry.step, ack: entry.ack, moving: entry.moving, rank: entry.rank,
+      rescued: entry.rescued, rescueTarget: entry.rescueTarget, rescueTicks: entry.rescueTicks,
     });
   });
   return {
@@ -238,7 +239,7 @@ function drawPanel() {
   if (panel === "dispatch") {
     title = "District dispatch";
     body = '<div class="panel-grid">' + (Object.keys(JOBS) as Mission[]).map((job) => {
-      const locked = job !== "chapter" && job !== "training" && !profile.clears.includes("chapter");
+      const locked = JOBS[job].requiresChapter && !profile.clears.includes("chapter");
       return item(JOBS[job].title, locked ? "Clear The Last Crossing to open this job." : escape(JOBS[job].description),
         button(job === "training" ? "Train" : "Create room", "create-" + job, locked));
     }).join("") + '</div><form id="join" class="join-code"><label>Room code <input name="code" maxlength="6" autocomplete="off" size="8" required></label><button class="button">Join</button></form>';
@@ -325,20 +326,50 @@ function updateHUD(actor?: ViewActor) {
     ? (profile.clears.includes("chapter") ? "Visit the workbench to preview a form. Dispatch has new jobs." : "Investigate the fare token at Dispatch.")
     : ({
       lobby: "Share room code " + world.code + ", then start the job.",
-      approach: "Read the maintenance log or head down the service lane.",
+      approach: world.mission === "night" ? "Follow the train along Platform 07." : "Read the maintenance log or head down the service lane.",
       combat: world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: "Another group is approaching.",
       route: "Use the blue door marker to enter the relay room.",
-      signal: "Inspect the incoming signal at the end of the lane.",
+      signal: world.mission === "night" ? "Bring your recalled companion to the return register." : "Inspect the incoming signal at the end of the lane.",
       complete: "Job complete. Use Mission to return to the plaza.",
       failed: "Party down. Retry from the Mission panel.",
     })[world.status] ?? "";
   text("objective-line", target);
   const point = nearestMarker(markers(), actor.x, actor.z);
-  text("prompt", point ? "E  •  " + point.title : "");
-  show("prompt", !!point);
+  const stationPrompt = point?.id === "register" && world.status === "signal" && actor.armed
+    ? "Q  •  Recall " + actor.companion + " to read the register"
+    : point && actor.hp ? "E  •  " + point.title : "";
+  const prompt = rescuePrompt(actor) || stationPrompt;
+  text("prompt", prompt);
+  show("prompt", !!prompt);
   text("combo", actor.combo + " HIT");
   show("combo", actor.combo > 1);
+}
+
+function rescuePrompt(actor: ViewActor) {
+  if (!world || !room || !connected || world.kind !== "mission" || !canRescueIn(world.status)) return "";
+  const progress = (helper: ViewActor) => Math.floor(helper.rescueTicks / RESCUE_TICKS * 100) + "%";
+  if (actor.rescueTarget) {
+    return "Hold still  •  " + actor.companion + " is reviving " + world.actors.get(actor.rescueTarget)?.name + "  •  " + progress(actor);
+  }
+  if (!actor.hp) {
+    const helper = [...world.actors.values()].find((teammate) => teammate.rescueTarget === room?.sessionId);
+    if (helper) return helper.companion + " is reviving you  •  " + progress(helper);
+    return actor.rescued ? "Downed  •  Rescue already used this run" : "Downed  •  A teammate can rescue you";
+  }
+  if (actor.phase !== "idle" || actor.moving) return "";
+  let closest: ViewActor | undefined;
+  let nearest = RESCUE_RANGE;
+  const busy = new Set([...world.actors.values()].map((teammate) => teammate.rescueTarget));
+  for (const [id, target] of world.actors) {
+    if (target.kind !== "player" || target.hp || !target.connected || target.rescued || busy.has(id)) continue;
+    const distance = rescueDistance(actor, target);
+    if (distance > nearest || (closest && distance === nearest)) continue;
+    nearest = distance;
+    closest = target;
+  }
+  if (!closest) return "";
+  return actor.armed ? "Q  •  Recall " + actor.companion + " to rescue " + closest.name : "E  •  Rescue " + closest.name;
 }
 
 function impulse(action: Action) {

@@ -1,10 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
-  battleRank, isFamily, isMission, LORE, PATCH_MS, TICK_RATE, type Action, type Family, type Mission, type Profile,
+  battleRank, isFamily, isMission, JOBS, LORE, PATCH_MS, TICK_RATE, type Action, type Family, type Mission, type Profile,
 } from "../../shared/src/content.ts";
-import { makeEnemy, makePlayer, resetPlayer, sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy,
-  type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
+import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
+  sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
 import { nearestMarker, PLAZA, routeMarkers, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
@@ -24,6 +24,8 @@ interface Entry {
   input: Input;
   at: number;
   ack: number;
+  rescued?: boolean;
+  rescue?: { target: Entry; start: number };
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -124,6 +126,8 @@ export class GameRoom extends Room<{ state: GameState }> {
       age: p.move?.age ?? 0, duration: p.move?.length ?? 0, step: p.move?.step ?? 0, combo: p.combo,
       moving: !p.move && !p.stagger && (Math.abs(entry.input.x) + Math.abs(entry.input.z) > 0.1) && this.state.frame - entry.at < 24,
       rank: p.rank,
+      rescued: entry.rescued ?? false, rescueTarget: entry.rescue?.target.player.id ?? "",
+      rescueTicks: entry.rescue ? this.state.frame - entry.rescue.start : 0,
     });
   }
 
@@ -145,7 +149,6 @@ export class GameRoom extends Room<{ state: GameState }> {
         stepPlayer(entry.player, input, entry.input.action, this.state.frame, this.enemies.values(), this.events, safe);
         entry.ack = entry.input.seq;
       }
-      entry.input.action = undefined;
     }
     if (this.state.status === "combat") {
       const targets = [...this.players.values()].filter((entry) => entry.connected).map((entry) => entry.player);
@@ -157,9 +160,12 @@ export class GameRoom extends Room<{ state: GameState }> {
         if (enemy.phase === "windup" || enemy.phase === "active") occupied.add(enemy.target);
       }
     }
-    for (const entry of this.players.values()) this.syncPlayer(entry);
-    for (const enemy of this.enemies.values()) this.syncEnemy(enemy);
     this.afterStep();
+    for (const entry of this.players.values()) {
+      entry.input.action = undefined;
+      this.syncPlayer(entry);
+    }
+    for (const enemy of this.enemies.values()) this.syncEnemy(enemy);
     for (const event of this.events) this.broadcast("combat", event);
   }
 
@@ -229,6 +235,7 @@ const challengeWaves = {
   platform: wave(["skitter", 3.0, -2], ["skitter", 5.5, 0.2], ["skitter", 3.2, 2.4], ["guard", 7.3, 1.7]),
   transformer: wave(["guard", 4.1, -1.6], ["guard", 5.8, 1.8], ["keeper", 8.6, 0]),
 };
+const nightWave = wave(["skitter", 3.8, -1.5], ["guard", 6.4, 1.7]);
 
 export class MissionRoom extends GameRoom {
   maxClients = 4;
@@ -259,8 +266,8 @@ export class MissionRoom extends GameRoom {
 
   override onJoin(client: Client, options: unknown, auth: Session) {
     if (this.state.status !== "lobby") throw new ServerError(409, "This mission already started.");
-    if (this.mission !== "training" && this.mission !== "chapter" && !auth.profile.clears.includes("chapter")) {
-      throw new ServerError(403, "Clear The Last Crossing to access district challenges.");
+    if (JOBS[this.mission].requiresChapter && !auth.profile.clears.includes("chapter")) {
+      throw new ServerError(403, "Clear The Last Crossing to open this job.");
     }
     if (this.previewFamily && !auth.profile.discovered.includes(this.previewFamily)) throw new ServerError(403, "This form has not been discovered.");
     super.onJoin(client, options, auth);
@@ -293,12 +300,21 @@ export class MissionRoom extends GameRoom {
     this.runId = randomUUID();
     this.state.stage = 0;
     this.state.wave = 0;
-    this.state.status = this.mission === "chapter" ? "approach" : "combat";
+    this.state.status = "approach";
     this.waveReady = 0;
     this.clearEnemies();
-    this.actors().forEach((player, index) => resetPlayer(player, index));
+    [...this.players.values()].forEach((entry, index) => {
+      entry.rescue = undefined;
+      entry.rescued = false;
+      resetPlayer(entry.player, index);
+    });
     if (this.mission === "chapter") {
       this.story("The Last Crossing", "A fare token dated 1999. The gate still recognizes it. Read the service desk if you want to know what happened here, then head down the lane.");
+    } else if (this.mission === "night") {
+      this.story(JOBS.night.title, "The train from the relay has arrived with its lights out. Your partner answers the door chime with two pulses. Follow the platform to the conductor’s register.");
+      for (const { client, connected, player } of this.players.values()) {
+        if (connected) client.send("combat", { type: "observe", source: player.id, x: player.x, z: player.z });
+      }
     } else if (this.mission === "training") {
       this.spawn(wave(["dummy", 0, 0]));
       const target = [...this.enemies.values()][0];
@@ -307,7 +323,7 @@ export class MissionRoom extends GameRoom {
         this.state.practice ? "Try the discovered form. Your current family and battle XP remain safe at the plaza." : "Arm your partner and break the practice target to record this family's mastery drill.");
     } else {
       this.spawn(challengeWaves[this.mission]);
-      this.story(this.mission === "platform" ? "Platform Sweep" : "Transformer Trial",
+      this.story(JOBS[this.mission].title,
         "Keep your partner close. The signal resolves when the lane is clear.");
     }
   }
@@ -330,8 +346,9 @@ export class MissionRoom extends GameRoom {
   }
 
   protected override afterStep() {
+    this.stepRescues();
     if (this.state.status === "approach" && this.actors().some((player) => player.x > -2.35)) {
-      this.spawn(chapterWaves[0]);
+      this.spawn(this.mission === "night" ? nightWave : chapterWaves[0]);
       return;
     }
     if (this.state.status === "interlude" && this.waveReady && this.state.frame >= this.waveReady) {
@@ -342,10 +359,15 @@ export class MissionRoom extends GameRoom {
     if (this.state.status !== "combat") return;
     if ([...this.players.values()].length && this.actors().every((player) => player.hp === 0)) {
       this.state.status = "failed";
-      this.story("Signal lost", "The party is down. Retry from the service entry.");
+      this.story("Signal lost", "The party is down. Use Mission to retry the job.");
       return;
     }
     if (!this.enemies.size || [...this.enemies.values()].some((enemy) => enemy.hp > 0)) return;
+    if (this.mission === "night") {
+      this.state.status = "signal";
+      this.story("The return register", "The platform is quiet. The register’s reader gives two short pulses. Recall your partner and bring it to the reader.");
+      return;
+    }
     if (this.mission !== "chapter") { this.finish(); return; }
     if (this.state.stage === 1) {
       this.state.status = "signal";
@@ -361,25 +383,76 @@ export class MissionRoom extends GameRoom {
     }
   }
 
+  private canAssist(entry: Entry) {
+    const player = entry.player;
+    return entry.connected && player.hp > 0 && !player.armed && player.y === 0 && !player.move && !player.stagger;
+  }
+
+  private canReachDowned(entry: Entry, target: Entry) {
+    return target.connected && !target.player.hp && !target.rescued
+      && rescueDistance(entry.player, target.player) <= RESCUE_RANGE;
+  }
+
+  private stepRescues() {
+    for (const entry of this.players.values()) {
+      const rescue = entry.rescue;
+      if (!rescue) continue;
+      const { target, start } = rescue;
+      const moving = this.state.frame - entry.at <= 24 && (entry.input.x !== 0 || entry.input.z !== 0);
+      if (!canRescueIn(this.state.status) || !this.canAssist(entry) || moving || entry.input.action
+        || !this.players.has(target.player.id) || !this.canReachDowned(entry, target)) {
+        entry.rescue = undefined;
+        continue;
+      }
+      if (this.state.frame - start < RESCUE_TICKS) continue;
+      Object.assign(target.player, { hp: RESCUE_HEALTH, y: 0, vy: 0, stagger: 0, armed: false });
+      target.rescued = true;
+      entry.rescue = undefined;
+      this.events.push({ type: "revive", source: entry.player.id, target: target.player.id, x: target.player.x, z: target.player.z });
+    }
+  }
+
   protected override interact(client: Client) {
     const entry = this.players.get(client.sessionId);
-    if (!entry?.player.hp || this.state.status === "lobby") return;
+    if (!entry?.connected || !entry.player.hp || this.state.status === "lobby" || entry.rescue) return;
+    if (canRescueIn(this.state.status) && this.canAssist(entry)) {
+      let closest: Entry | undefined;
+      for (const target of this.players.values()) {
+        if (!this.canReachDowned(entry, target) || [...this.players.values()].some((other) => other.rescue?.target === target)) continue;
+        if (!closest || rescueDistance(entry.player, target.player) < rescueDistance(entry.player, closest.player)) closest = target;
+      }
+      if (closest) {
+        entry.rescue = { target: closest, start: this.state.frame };
+        return;
+      }
+    }
     const point = nearestMarker(routeMarkers(this.mission, this.state.stage), entry.player.x, entry.player.z);
     if (!point) return;
     if (point.lore) { this.observe(entry, point); return; }
     if (point.id === "advance" && this.state.status === "route") {
       this.state.stage = 1;
       this.clearEnemies();
-      this.actors().forEach((player, index) => resetPlayer(player, index));
+      [...this.players.values()].forEach((partyMember, index) => {
+        partyMember.rescue = undefined;
+        resetPlayer(partyMember.player, index);
+      });
       this.spawn(chapterWaves[2]);
       this.story("The Switchkeeper", "Its hands still close around the route controls. Step out of its wind-up, then answer during recovery.");
     } else if (point.id === "signal" && this.state.status === "signal") {
+      this.finish();
+    } else if (point.id === "register" && this.state.status === "signal") {
+      if (entry.player.armed || entry.player.move?.kind === "arm" || entry.player.move?.kind === "recall") {
+        client.send("notice", "Recall your partner with Q and let it answer the reader.");
+        return;
+      }
+      this.broadcast("combat", { type: "observe", source: entry.player.id, x: point.x, z: point.z });
       this.finish();
     } else client.send("notice", "The passage opens when the lane is safe.");
   }
 
   private finish() {
     const entries = [...this.players.values()];
+    for (const entry of entries) entry.rescue = undefined;
     const profiles = store.reward(entries.map((entry) => entry.profileId), this.runId, this.mission, entries[0]?.player.family, this.state.practice);
     for (const entry of entries) {
       const profile = profiles.get(entry.profileId);
@@ -389,6 +462,8 @@ export class MissionRoom extends GameRoom {
     this.broadcast("combat", { type: "clear", source: "", x: 0, z: 0 });
     if (this.mission === "chapter") {
       this.story("Incoming train • Line closed", "The display changes to ARRIVING. Your partner gives the two-beat pulse you know, then shows you a memory of Brickback. You can explore that form in the plaza.");
+    } else if (this.mission === "night") {
+      this.story(LORE.register.title, LORE.register.text);
     } else if (this.mission === "training") {
       this.story("Practice complete", this.state.practice ? "Return to the plaza when you’re ready." : "Mastery recorded in your partner’s journal. The follow-up becomes usable at battle rank 3.");
     } else this.story("Signal recovered", "A new form is recorded in your partner’s journal. Explore it at the plaza workbench.");

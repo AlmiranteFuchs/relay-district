@@ -4,6 +4,9 @@ export const DT = 1 / TICK_RATE;
 export const PLAYER_SPEED = 5.2;
 export const LIMITS = { x: 10.8, z: 4.75 };
 export const ARM_TICKS = 20;
+export const RESCUE_TICKS = 72;
+export const RESCUE_RANGE = 1.55;
+export const RESCUE_HEALTH = 40;
 const BUFFER_TICKS = 18;
 const MAX_HEALTH = 125;
 const GRAVITY = 19;
@@ -13,7 +16,7 @@ export interface Input extends Axes { seq: number; action?: Action }
 export interface Position { x: number; z: number; facing: number }
 export type EnemyKind = "skitter" | "guard" | "keeper" | "dummy";
 export interface CombatEvent {
-  type: "hit" | "swing" | "windup" | "arm" | "dodge" | "down" | "observe" | "clear";
+  type: "hit" | "swing" | "windup" | "arm" | "dodge" | "down" | "observe" | "revive" | "clear";
   source: string;
   target?: string;
   damage?: number;
@@ -60,6 +63,14 @@ export function resetPlayer(player: Player, index: number, full = true) {
   });
   player.hp = full ? MAX_HEALTH : Math.min(MAX_HEALTH, player.hp + 28);
   player.energy = full ? MAX_ENERGY : Math.min(MAX_ENERGY, player.energy + 36);
+}
+
+export function canRescueIn(status: string) {
+  return ["combat", "interlude", "route", "signal"].includes(status);
+}
+
+export function rescueDistance(from: Axes, to: Axes) {
+  return Math.hypot(from.x - to.x, from.z - to.z);
 }
 
 export function makeEnemy(id: string, kind: EnemyKind, x: number, z: number, players = 1): Enemy {
