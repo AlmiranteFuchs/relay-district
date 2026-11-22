@@ -29,6 +29,8 @@ Start with Kite Moth and its coil staff. Clear the first chapter, listen at the 
 
 After The Last Crossing, Dispatch opens **The Night Platform**, the next story mission. Follow the arriving train, clear the platform, then recall your companion with **Q** and inspect the return register. Everyone in the room receives the memory in their companion journal.
 
+Clear The Night Platform to enter **Return Junction**. Use the return signal with your companion recalled to set the turnout, then defend it. Read the signal again to record the turnout log in each player's journal.
+
 The companion keeps its name, personality, bond, trinket, room theme, memories, former forms, and mastery records through a morph. Battle XP starts at zero for the new form. Its basic chain and signature skill are available immediately. Complete a mastery drill and reach rank three to use the follow-up. Earn another catalyst by clearing two distinct missions and carry one at a time.
 
 In the companion room, rename your partner, decorate its room, choose a keepsake, and play together. Inspect the closure plaque, maintenance log, and broken announcement to record the history of the Last Crossing. Open Sound to hear the original score and gameplay cues.

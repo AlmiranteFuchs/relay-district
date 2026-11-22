@@ -187,6 +187,30 @@ export class GameView {
     }
   }
 
+  private returnJunction(root: TransformNode) {
+    const casing = this.material("Turnout casing", "#4a5a68");
+    const timber = this.material("Dark sleepers", "#4d443a");
+    const steel = this.material("Drawn rail", "#83999b", true);
+    const lens = this.material("Turnout lamp", "#d4a25d");
+    lens.emissiveColor = Color3.FromHexString("#b47937").scale(.65);
+    for (let x = -9; x <= 9; x += .85) {
+      this.mesh("Track sleeper", [.24, .08, .67], [x, .05, 4.98], timber, root);
+    }
+    for (const z of [4.75, 5.13]) {
+      this.mesh("Running rail", [18.7, .07, .058], [0, .125, z], steel, root);
+    }
+    for (const z of [4.8, 4.97]) {
+      const blade = this.mesh("Switch rail", [5.85, .065, .047], [2.12, .121, z], steel, root);
+      blade.rotation.y = -.056;
+    }
+    this.mesh("Signal mast", [.19, 2.25, .23], [3.6, 1.14, 4.82], casing, root);
+    this.mesh("Signal head", [.67, .72, .27], [3.6, 2.38, 4.82], casing, root);
+    const lamp = MeshBuilder.CreateSphere("Signal lens", { diameter: .36, segments: 10 }, this.scene);
+    lamp.parent = root; lamp.material = lens; lamp.scaling.z = .31; lamp.position.set(3.6, 2.42, 4.656);
+    this.sign("RETURN JUNCTION", "SWITCHING GALLERY / LINE 07", -7.95, 3.02, 4.97, root);
+    this.sign("SIGNAL 12", "RETURN ROUTE / MANUAL TURNOUT", 7.92, 1.62, 5.06, root, true);
+  }
+
   private setPlace(world: WorldView, markers: Marker[]) {
     const id = world.kind + world.mission + world.stage + (world.status === "lobby" ? "lobby" : "");
     if (this.place === id) return;
@@ -197,7 +221,8 @@ export class GameView {
     const root = this.scenery = new TransformNode("District architecture", this.scene);
     const plaza = world.kind === "plaza";
     const night = world.mission === "night";
-    const relay = world.stage === 1 || world.mission === "transformer";
+    const junction = world.mission === "return";
+    const relay = junction || world.stage === 1 || world.mission === "transformer";
     const panel = this.material("slate", "#8297a5");
     const inset = this.material("inset", "#46586b");
     const beam = this.material("painted blue", "#4b647d");
@@ -253,6 +278,7 @@ export class GameView {
       for (const dx of [-1.83, 0, 1.83]) this.mesh("Rail post", [.059, .91, .071], [x + dx, .45, 4.74], chrome, root);
     }
     if (night) this.nightPlatform(root);
+    else if (junction) this.returnJunction(root);
     else {
       this.sign(plaza ? "REPAIR PLAZA" : relay ? "LINE 07" : "SERVICE ENTRY",
         plaza ? "BOND REGISTRY / DISTRICT DISPATCH" : relay ? "SIGNAL AUTHORITY / PLATFORM SEALED" : "AUTHORIZED COURIERS / AUTUMN 2007",
@@ -262,7 +288,7 @@ export class GameView {
     }
     this.mesh("Circuit across the wall", [10, .05, .12], [2.5, 4.02, 4.93], chrome, root);
     const screenDark = this.material("CRT surround", "#304355");
-    for (const x of night ? [] : [-10.6, 2.1]) {
+    for (const x of night || junction ? [] : [-10.6, 2.1]) {
       this.mesh("Service equipment", [1.38, 1.35, .56], [x, .68, 4.97], darker, root);
       this.mesh("Service screen", [.93, .45, .07], [x, 1.04, 4.66], screenDark, root);
       this.mesh("Sparse readout", [.56, .04, .082], [x, 1.08, 4.61], cyan, root);
