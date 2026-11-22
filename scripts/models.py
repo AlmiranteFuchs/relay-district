@@ -1,10 +1,13 @@
 """Author the original low-poly models and shared diffuse textures.
 
 Blender background mode: blender -b -t 2 --python scripts/models.py
+One companion and weapon: blender -b -t 2 --python scripts/models.py -- --pair moth
 """
 
+import argparse
 import math
 import random
+import sys
 from pathlib import Path
 import bpy
 from mathutils import Vector
@@ -130,7 +133,6 @@ def courier():
 
 
 palette = {
-    "moth": ((.126, .35, .29), (.29, .77, .61)),
     "brick": ((.42, .183, .133), (.94, .54, .20)),
     "heron": ((.173, .216, .41), (.40, .58, .96)),
     "boar": ((.28, .11, .09), (.9, .343, .105)),
@@ -140,41 +142,89 @@ palette = {
 }
 biotissue = material("Violet muscle", (.185, .063, .11), .62)
 edge = material("Warm enamel", (.59, .49, .31), .68)
+moth_shell = material("Kite Moth ivory chitin", (.77, .82, .64), .64)
+moth_membrane = material("Kite Moth wing membrane", (.30, .45, .35), .72)
+moth_tissue = material("Kite Moth flex tissue", (.27, .11, .16), .65)
+moth_socket = material("Kite Moth lens socket", (.14, .22, .21), .72)
+moth_lens = material("Kite Moth pulse organ", (.25, .74, .61), .42, luminous=True)
+
+
+def carapace(name, position, scale, mat, parent, tilt=0):
+    shell = oval(name, position, scale, mat, parent, 10, 6, tilt)
+    for vertex in shell.data.vertices:
+        x, _, z = vertex.co
+        vertex.co.y *= .95 + .14 * x - .17 * x * x
+        vertex.co.z = z * (1 if z > 0 else .52) - .13 * x * x
+    shell.data.update()
+    return shell
+
+
+def kite_moth(size):
+    body = root("creature")
+    body.scale = (size,) * 3
+    hull = root("organism", (.015, 0, .37), body)
+    oval("flexible thorax", (-.074, 0, .105), (.365, .217, .173), moth_tissue, hull, 10, 6, -.15)
+    carapace("raised thorax chitin", (-.112, 0, .187), (.369, .237, .195), moth_shell, hull, -.16)
+    oval("pulse socket", (.278, 0, .133), (.152, .147, .134), moth_socket, hull)
+    oval("pulse_core", (.338, 0, .133), (.103, .158, .109), moth_lens, hull, 12, 8)
+    carapace("visor over pulse organ", (.337, 0, .237), (.147, .166, .063), moth_shell, hull, -.23)
+    carapace("plated jaw", (.291, 0, .019), (.166, .126, .078), moth_membrane, hull, .16)
+
+    for sign, suffix in ((-1, "near"), (1, "far")):
+        side = root("plate_" + suffix, (-.07, sign * .23 * .62, .22), hull)
+        underwing = carapace("tapered underwing", (-.116, sign * .187, -.046), (.306, .259, .069), moth_membrane, side, -.21)
+        cap = carapace("folded dorsal chitin", (-.126, sign * .139, -.014), (.316, .217, .087), moth_shell, side, -.21)
+        underwing.rotation_euler.z = cap.rotation_euler.z = -sign * .39
+        outer_seam = carapace("inset wing seam", (-.105, sign * .252, -.025), (.213, .047, .038), moth_socket, side, -.1)
+        outer_seam.rotation_euler.z = -sign * .39
+
+        joint = (.084, sign * .235, -.011)
+        knee = (.108, sign * .264, -.134)
+        foot = (.235, sign * .228, -.19)
+        rod("flexor", joint, knee, .043, .032, moth_tissue, hull, 7)
+        oval("knee shell", knee, (.053, .046, .048), moth_membrane, hull, 8, 5)
+        rod("folded tarsus", knee, foot, .039, .015, moth_shell, hull, 7)
+        rod("tarsal tip", foot, (.268, sign * .22, -.17), .017, .007, moth_tissue, hull, 6)
+
+        feeler_joint = (.246, sign * .128, .352)
+        rod("feeler root", (.164, sign * .094, .268), feeler_joint, .024, .016, moth_tissue, hull, 6)
+        rod("feelers " + suffix, feeler_joint, (.359, sign * .196, .383), .017, .008, moth_membrane, hull, 6)
 
 
 def creature(family, size=1):
     clear()
+    if family == "moth":
+        kite_moth(size)
+        export(family)
+        return
     color, glow = palette[family]
     shell = material(family + " chitin", color, .59)
     organ = material(family + " living core", glow, .42, paint=False, luminous=True)
     body = root("creature", (0, 0, 0))
     body.scale = (size,) * 3
     hull = root("organism", (.015, 0, .37), body)
-    scale = {"moth": (.35, .23, .23), "brick": (.38, .31, .31), "heron": (.29, .19, .24),
+    scale = {"brick": (.38, .31, .31), "heron": (.29, .19, .24),
              "boar": (.48, .31, .29), "skitter": (.42, .29, .25),
              "guard": (.42, .35, .38), "keeper": (.36, .42, .53)}[family]
     oval("living abdomen", (-.035, 0, .11), scale, biotissue, hull, 12, 8)
     oval("main shell", (-.10, 0, .19), tuple(v * 1.08 for v in scale), shell, hull, 12, 8, -.14)
-    lens = oval("pulse_core", (scale[0] - .012, 0, .133), (.103, .158, .109), organ, hull, 12, 8)
+    oval("pulse_core", (scale[0] - .012, 0, .133), (.103, .158, .109), organ, hull, 12, 8)
     oval("brow plate", (scale[0] - .01, 0, .238), (.152, .169, .067), edge, hull, 10, 5, -.23)
     for sign, suffix in ((-1, "near"), (1, "far")):
         side = root("plate_" + suffix, (-.07, sign * scale[1] * .62, .22), hull)
-        extent = .51 if family in ("moth", "heron") else .32
+        extent = .51 if family == "heron" else .32
         oval("shell lobe " + suffix, (-.1, extent * sign * .5, .06), (.262, extent, .075), shell, side, 12, 7, -.34)
         oval("rib seam " + suffix, (-.065, extent * sign *.61, -.012), (.192, extent * .66, .031), edge, side)
         if family == "heron":
             rod("quill " + suffix, (-.15, extent * sign * .42, .03), (-.47, extent * sign, .22), .057, .008, edge, side)
         if family == "boar":
             rod("tusk " + suffix, (.25, sign * .16, -.015), (.57, sign * .18, .13), .065, .015, edge, hull)
-        if family != "moth":
-            leg = root("leg_" + suffix, (-.04, sign * scale[1] * .8, -.05), hull)
-            elbow = (.128, .135 * sign, -.108)
-            rod("tendon " + suffix, (0, 0, 0), elbow, .074, .051, biotissue, leg)
-            oval("ankle " + suffix, elbow, (.068, .058, .062), shell, leg)
-            rod("shin " + suffix, elbow, (.015, .17 * sign, -.3), .054, .032, shell, leg)
-            oval("toe " + suffix, (.06, .17 * sign, -.30), (.096, .057, .042), edge, leg)
-        else:
-            rod("feelers " + suffix, (.18, .09 * sign, .252), (.31, .16 * sign, .387), .025, .007, biotissue, hull, 6)
+        leg = root("leg_" + suffix, (-.04, sign * scale[1] * .8, -.05), hull)
+        elbow = (.128, .135 * sign, -.108)
+        rod("tendon " + suffix, (0, 0, 0), elbow, .074, .051, biotissue, leg)
+        oval("ankle " + suffix, elbow, (.068, .058, .062), shell, leg)
+        rod("shin " + suffix, elbow, (.015, .17 * sign, -.3), .054, .032, shell, leg)
+        oval("toe " + suffix, (.06, .17 * sign, -.30), (.096, .057, .042), edge, leg)
     if family == "keeper":
         for sign in (-1, 1):
             rod("long keeper tendril", (0, sign * .27, .34), (.2, sign * .65, .045), .10, .041, shell, hull)
@@ -182,8 +232,29 @@ def creature(family, size=1):
     export(family)
 
 
+def coil_staff():
+    w = root("armed_organism")
+    rod("tendon grip", (-.43, 0, 0), (.35, 0, 0), .045, .061, moth_tissue, w)
+    oval("heel plate", (-.408, 0, 0), (.084, .054, .058), moth_membrane, w, 8, 5)
+    for x in (-.29, -.22, -.15):
+        oval("grip band", (x, 0, 0), (.022, .052, .052), moth_socket, w, 8, 5)
+    rod("enamel shaft", (.098, 0, 0), (1.22, 0, .014), .053, .046, moth_shell, w)
+    rod("shaft tendon", (.22, -.038, -.022), (1.14, -.047, -.013), .014, .023, moth_membrane, w, 6)
+    oval("pulse socket", (1.18, 0, .022), (.197, .097, .100), moth_socket, w, 10, 6)
+    oval("staff floating core", (1.28, 0, .045), (.188, .107, .090), moth_lens, w, 12, 8)
+    for sign in (-1, 1):
+        folded = carapace("folded kite plate", (1.14, sign * .086, -.024), (.29, .071, .086), moth_shell, w, -.17)
+        folded.rotation_euler.z = sign * .15
+        rod("membrane seam", (.95, sign * .078, -.013), (1.39, sign * .146, .036), .018, .024, moth_membrane, w, 6)
+        rod("prong", (1.32, sign * .105, .026), (1.64, sign * .134, .079), .04, .014, moth_shell, w, 7)
+
+
 def weapon(family):
     clear()
+    if family == "moth":
+        coil_staff()
+        export(family + "-weapon")
+        return
     color, glow = palette[family]
     shell = material(family + " weapon shell", color, .46)
     organ = material(family + " weapon organ", glow, .35, paint=False, luminous=True)
@@ -206,11 +277,6 @@ def weapon(family):
             oval("blade root", (.49, 0, .014), (.20, .113, .088), shell, w)
             rod("glass cutting plane", (.72, 0, .005), (1.85, 0, .05), .11, .005, organ, w, 4)
             rod("spine", (.59, 0, .046), (1.7, 0, .11), .048, .006, edge, w, 5)
-        else:
-            oval("staff floating core", (1.24, 0, .014), (.185, .082, .085), organ, w)
-            for sign in (-1, 1):
-                oval("folded kite plate", (1.17, sign * .116, 0), (.287, .057, .102), shell, w)
-                rod("prong", (1.29, sign * .106, .014), (1.65, sign * .151, .05), .045, .006, edge, w)
     export(family + "-weapon")
 
 
@@ -246,10 +312,23 @@ def portrait(family):
     bpy.ops.render.render(write_still=True)
 
 
-courier()
-for name in ("moth", "brick", "heron", "boar"):
-    creature(name)
-    portrait(name)
-    weapon(name)
-for name, size in (("skitter", 1.38), ("guard", 1.65), ("keeper", 2.37)):
-    creature(name, size)
+def generate():
+    families = ("moth", "brick", "heron", "boar")
+    parser = argparse.ArgumentParser(description="Generate Relay District GLB assets")
+    parser.add_argument("--pair", choices=families, help="Export only the creature and weapon GLBs for this family")
+    args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
+    if args.pair:
+        creature(args.pair)
+        weapon(args.pair)
+        return
+    courier()
+    for name in families:
+        creature(name)
+        portrait(name)
+        weapon(name)
+    for name, size in (("skitter", 1.38), ("guard", 1.65), ("keeper", 2.37)):
+        creature(name, size)
+
+
+if __name__ == "__main__":
+    generate()
