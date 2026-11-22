@@ -41,11 +41,16 @@ test("one companion survives chapter, mastery, morph, and a database restart", (
     assert.deepEqual(store.profile(account.id), night);
     store.reward([account.id], "night-b", "night");
     assert.equal(store.profile(account.id).bond, night.bond);
+    const junction = store.reward([account.id], "junction-a", "return").get(account.id)!;
+    store.reward([account.id], "junction-a", "return");
+    assert.deepEqual(store.profile(account.id), junction);
+    store.reward([account.id], "junction-b", "return");
+    assert.equal(store.profile(account.id).bond, junction.bond);
     store.close();
     store = new Store(file);
     assert.equal(store.session(account.token)?.profile.companion, "Pebble");
     assert.deepEqual(store.session(account.token)?.profile.history, ["moth", "brick", "moth"]);
-    assert.deepEqual(store.session(account.token)?.profile.lore, ["log", "register"]);
+    assert.deepEqual(store.session(account.token)?.profile.lore, ["log", "register", "turnout"]);
     assert.equal(store.session("x".repeat(43)), null);
   } finally {
     store.close();

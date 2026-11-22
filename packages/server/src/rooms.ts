@@ -236,6 +236,10 @@ const challengeWaves = {
   transformer: wave(["guard", 4.1, -1.6], ["guard", 5.8, 1.8], ["keeper", 8.6, 0]),
 };
 const nightWave = wave(["skitter", 3.8, -1.5], ["guard", 6.4, 1.7]);
+const returnWaves = [
+  wave(["skitter", 2.2, -2.25], ["skitter", 5.15, 2.45]),
+  wave(["keeper", 0.2, -1.45], ["skitter", 4.9, 3.35]),
+];
 
 export class MissionRoom extends GameRoom {
   maxClients = 4;
@@ -268,6 +272,10 @@ export class MissionRoom extends GameRoom {
     if (this.state.status !== "lobby") throw new ServerError(409, "This mission already started.");
     if (JOBS[this.mission].requiresChapter && !auth.profile.clears.includes("chapter")) {
       throw new ServerError(403, "Clear The Last Crossing to open this job.");
+    }
+    const prerequisite = JOBS[this.mission].prerequisite;
+    if (prerequisite && !auth.profile.clears.includes(prerequisite)) {
+      throw new ServerError(403, "Clear " + JOBS[prerequisite].title + " to open this job.");
     }
     if (this.previewFamily && !auth.profile.discovered.includes(this.previewFamily)) throw new ServerError(403, "This form has not been discovered.");
     super.onJoin(client, options, auth);
@@ -315,6 +323,9 @@ export class MissionRoom extends GameRoom {
       for (const { client, connected, player } of this.players.values()) {
         if (connected) client.send("combat", { type: "observe", source: player.id, x: player.x, z: player.z });
       }
+    } else if (this.mission === "return") {
+      this.spawn(returnWaves[0]);
+      this.story(JOBS.return.title, "The register points to a turnout at the east junction. Clear the track, then let your partner answer the return signal.");
     } else if (this.mission === "training") {
       this.spawn(wave(["dummy", 0, 0]));
       const target = [...this.enemies.values()][0];
@@ -366,6 +377,15 @@ export class MissionRoom extends GameRoom {
     if (this.mission === "night") {
       this.state.status = "signal";
       this.story("The return register", "The platform is quiet. The register’s reader gives two short pulses. Recall your partner and bring it to the reader.");
+      return;
+    }
+    if (this.mission === "return") {
+      this.state.status = "signal";
+      if (this.state.wave === 0) {
+        this.story("The east turnout", "The signal can move the turnout now. Recall your partner with Q, then use the signal box to open the return track.");
+      } else {
+        this.story("A live line", "The guards are down. The signal is green for the first time since the evacuation. Bring your recalled partner to the box again to read the log.");
+      }
       return;
     }
     if (this.mission !== "chapter") { this.finish(); return; }
@@ -438,16 +458,25 @@ export class MissionRoom extends GameRoom {
       });
       this.spawn(chapterWaves[2]);
       this.story("The Switchkeeper", "Its hands still close around the route controls. Step out of its wind-up, then answer during recovery.");
-    } else if (point.id === "signal" && this.state.status === "signal") {
-      this.finish();
-    } else if (point.id === "register" && this.state.status === "signal") {
-      if (entry.player.armed || entry.player.move?.kind === "arm" || entry.player.move?.kind === "recall") {
-        client.send("notice", "Recall your partner with Q and let it answer the reader.");
+    } else if ((point.id === "signal" || point.id === "register") && this.state.status === "signal") {
+      this.interactSignal(entry, point);
+    } else client.send("notice", "The passage opens when the lane is safe.");
+  }
+
+  private interactSignal(entry: Entry, point: Marker) {
+    if (this.mission !== "chapter") {
+      const player = entry.player;
+      if (player.armed || player.move?.kind === "arm" || player.move?.kind === "recall") {
+        entry.client.send("notice", "Recall your partner with Q and let it answer the reader.");
         return;
       }
-      this.broadcast("combat", { type: "observe", source: entry.player.id, x: point.x, z: point.z });
-      this.finish();
-    } else client.send("notice", "The passage opens when the lane is safe.");
+      this.broadcast("combat", { type: "observe", source: player.id, x: point.x, z: point.z });
+    }
+    if (this.mission === "return" && this.state.wave === 0) {
+      this.state.wave = 1;
+      this.spawn(returnWaves[1]);
+      this.story("Return track open", "The turnout throws. Your partner tastes a charge on the rail as a Switchkeeper comes up the open track. Arm again and keep the line clear.");
+    } else this.finish();
   }
 
   private finish() {
@@ -460,10 +489,11 @@ export class MissionRoom extends GameRoom {
     }
     this.state.status = "complete";
     this.broadcast("combat", { type: "clear", source: "", x: 0, z: 0 });
+    const memory = JOBS[this.mission].clearLore;
     if (this.mission === "chapter") {
       this.story("Incoming train • Line closed", "The display changes to ARRIVING. Your partner gives the two-beat pulse you know, then shows you a memory of Brickback. You can explore that form in the plaza.");
-    } else if (this.mission === "night") {
-      this.story(LORE.register.title, LORE.register.text);
+    } else if (memory) {
+      this.story(LORE[memory].title, LORE[memory].text);
     } else if (this.mission === "training") {
       this.story("Practice complete", this.state.practice ? "Return to the plaza when you’re ready." : "Mastery recorded in your partner’s journal. The follow-up becomes usable at battle rank 3.");
     } else this.story("Signal recovered", "A new form is recorded in your partner’s journal. Explore it at the plaza workbench.");

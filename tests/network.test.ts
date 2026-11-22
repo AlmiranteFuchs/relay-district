@@ -270,6 +270,82 @@ test("the night platform unlocks after the chapter and records the register for 
   }
 });
 
+test("return junction requires the night platform, preserves health between waves, and grants the turnout log once", { timeout: 65000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      if (account !== guest) server.store.reward([id], "night-unlock", "night");
+    }
+    await assert.rejects(guest.sdk.create("mission", { mission: "return" }), /Clear The Night Platform/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "return" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear The Night Platform/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const observations: number[][] = [[], []];
+    for (const [index, room] of rooms.entries()) {
+      room.onMessage("combat", (event: CombatEvent) => {
+        if (event.type === "observe") observations[index].push(event.x);
+      });
+    }
+    first.send("begin");
+    await until("junction combat starts for both players", () => first.state.status === "combat" && other.state.status === "combat");
+    await fight([a, b], "signal", 20000);
+    assert.equal(first.state.wave, 0);
+
+    const operator = a.me.hp > 0 ? a : b;
+    await operator.go(8.25, 1.25);
+    await until("operator is idle", () => operator.me.phase === "idle");
+    if (!operator.me.armed) operator.send(0, 0, "morph");
+    await until("operator is armed", () => operator.me.armed);
+    let blocked = false;
+    operator.room.onMessage("notice", (notice: string) => { blocked ||= notice.includes("Recall your partner"); });
+    operator.room.send("interact");
+    await until("signal rejects the armed companion", () => blocked);
+    assert.equal(first.state.wave, 0);
+    assert.equal(first.state.status, "signal");
+    operator.send(0, 0, "morph");
+    await until("operator's partner is recalled", () => !operator.me.armed && operator.me.phase === "idle");
+    const health = [a.me.hp, b.me.hp];
+    operator.room.send("interact");
+    await until("the turnout opens the second wave", () => first.state.wave === 1 && other.state.wave === 1 && other.state.status === "combat");
+    assert.deepEqual([a.me.hp, b.me.hp], health);
+    for (const account of [alpha, beta]) assert.deepEqual((await account.profile()).lore, ["register"]);
+
+    await fight([a, b], "signal", 30000);
+    const reader = a.me.hp > 0 ? a : b;
+    await reader.go(8.25, 1.25);
+    await until("reader is idle", () => reader.me.phase === "idle");
+    if (reader.me.armed) reader.send(0, 0, "morph");
+    await until("reader's partner is recalled", () => !reader.me.armed && reader.me.phase === "idle");
+    reader.room.send("interact");
+    reader.room.send("interact");
+    await until("both clients see the junction clear", () => first.state.status === "complete" && other.state.status === "complete");
+    assert.deepEqual(observations, [[8.25, 8.25], [8.25, 8.25]]);
+    for (const account of [alpha, beta]) {
+      const profile = await account.profile();
+      assert.deepEqual(profile.clears, ["chapter", "night", "return"]);
+      assert.deepEqual(profile.lore, ["register", "turnout"]);
+      assert.deepEqual(profile.discovered, ["moth", "brick"]);
+      assert.equal(profile.companion, "Neri");
+      assert.equal(profile.battleXp, 160);
+      assert.equal(profile.bond, 16);
+    }
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
 test("two players clear the chapter, see identical hit confirms, and keep rewards", { timeout: 85000 }, async () => {
   const server = await runServer({ port: 0, database: ":memory:" });
   const origin = "http://127.0.0.1:" + server.port;

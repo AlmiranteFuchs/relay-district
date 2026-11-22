@@ -10,6 +10,7 @@ export const PLAZA: Marker[] = [
 
 export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "night") return [{ id: "register", x: 8.25, z: 2.25, title: "Return Register" }];
+  if (mission === "return") return [{ id: "signal", x: 8.25, z: 1.25, title: "Return Signal" }];
   if (mission !== "chapter") return [];
   return stage === 0
     ? [
