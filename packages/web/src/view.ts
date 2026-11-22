@@ -6,6 +6,7 @@ import "@babylonjs/loaders/glTF/index.js";
 import { FORMS, type Family } from "../../shared/src/content.ts";
 import type { CombatEvent } from "../../shared/src/combat.ts";
 import type { Marker } from "../../shared/src/scene.ts";
+import { MothAnimation } from "./moth-animation.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -26,6 +27,7 @@ interface Visual {
   model: Model;
   creature?: Model;
   weapon?: Model;
+  mothAnimation?: MothAnimation;
   at: Vector3;
   shadow: Mesh;
   family: Family;
@@ -367,10 +369,17 @@ export class GameView {
   private setFamily(visual: Visual, family: Family) {
     visual.creature?.node.dispose();
     visual.weapon?.node.dispose();
+    if (visual.mothAnimation) {
+      for (const name of ["torso", "head", "arm_near", "arm_far", "elbow_near", "elbow_far"]) {
+        const joint = visual.model.parts.get(name);
+        if (joint) joint.rotation.y = 0;
+      }
+    }
     visual.family = family;
     visual.creature = this.instantiate(family);
     visual.weapon = this.instantiate(family + "-weapon");
     visual.weapon.node.parent = visual.model.node;
+    visual.mothAnimation = family === "moth" ? new MothAnimation(visual.model, visual.creature, visual.weapon) : undefined;
   }
 
   private project(label: HTMLDivElement, position: Vector3) {
@@ -448,6 +457,11 @@ export class GameView {
     const body = visual.model.node;
     const t = this.clock;
     body.rotation.y = actor.facing < 0 ? Math.PI : 0;
+    if (visual.mothAnimation) {
+      visual.mothAnimation.pose(actor, t, dt, visual.reaction, rescueTarget);
+      visual.reaction = Math.max(0, visual.reaction - dt * .9);
+      return;
+    }
     const isPlayer = actor.kind === "player";
     const parts = visual.model.parts;
     const move = ["attack", "air", "skill", "mastery"].includes(actor.phase);
