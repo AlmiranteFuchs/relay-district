@@ -532,6 +532,17 @@ export class GameView {
       this.camera.position.x += (focus + .4 - this.camera.position.x) * (1 - Math.exp(-dt * 4));
       this.camera.setTarget(new Vector3(this.camera.position.x - .4, .7, -.29));
       this.setPlace(world, markers);
+      const junctionLamp = world.mission === "return" ? this.palette.get("Turnout lamp") : undefined;
+      if (junctionLamp) {
+        const routeClear = world.wave === 1 && (world.status === "signal" || world.status === "complete");
+        if (routeClear) {
+          junctionLamp.diffuseColor.set(.48, .83, .67);
+          junctionLamp.emissiveColor.set(.16, .59, .41);
+        } else {
+          junctionLamp.diffuseColor.set(.83, .64, .36);
+          junctionLamp.emissiveColor.set(.46, .31, .14);
+        }
+      }
       for (const [id, visual] of this.visuals) if (!world.actors.has(id)) {
         visual.model.node.dispose(); visual.creature?.node.dispose(); visual.shadow.dispose(); visual.label.remove();
         this.visuals.delete(id);
