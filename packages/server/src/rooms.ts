@@ -149,7 +149,13 @@ export class GameRoom extends Room<{ state: GameState }> {
     }
     if (this.state.status === "combat") {
       const targets = [...this.players.values()].filter((entry) => entry.connected).map((entry) => entry.player);
-      for (const enemy of this.enemies.values()) stepEnemy(enemy, targets, this.state.frame, this.events);
+      const occupied = new Set([...this.enemies.values()]
+        .filter((enemy) => enemy.hp && (enemy.phase === "windup" || enemy.phase === "active"))
+        .map((enemy) => enemy.target));
+      for (const enemy of this.enemies.values()) {
+        stepEnemy(enemy, targets, this.state.frame, this.events, (target) => !occupied.has(target));
+        if (enemy.phase === "windup" || enemy.phase === "active") occupied.add(enemy.target);
+      }
     }
     for (const entry of this.players.values()) this.syncPlayer(entry);
     for (const enemy of this.enemies.values()) this.syncEnemy(enemy);

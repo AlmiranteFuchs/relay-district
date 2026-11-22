@@ -119,17 +119,17 @@ class TestCourier {
       .sort((a, b) => this.distance(a) - this.distance(b))[0];
     if (!hostile) { this.send(0, 0); return; }
     const dx = hostile.x - actor.x, dz = hostile.z - actor.z;
-    if (hostile.phase === "windup" || hostile.phase === "active") {
+    if (hostile.phase === "active" || (hostile.phase === "windup" && (hostile.kind !== "skitter" || hostile.age < 18))) {
       if (Math.abs(dz) < (hostile.kind === "keeper" ? 1.58 : 1.21) && Math.abs(dx) < 3)
         this.send(0, dz < -.08 ? 1 : dz > .08 ? -1 : actor.z > 0 ? 1 : -1, "dodge");
       else this.send(0, 0);
       return;
     }
     if (Math.abs(dz) > .56) { this.send(0, Math.sign(dz)); return; }
-    if (dx * actor.facing < .10) { this.send(Math.sign(dx) || 1, 0); return; }
+    if (dx * actor.facing < -.12) { this.send(Math.sign(dx), 0); return; }
     const max = actor.family === "brick" ? 1.23 : actor.family === "boar" ? 2.05 : 2.3;
     if (Math.abs(dx) > max) { this.send(Math.sign(dx), 0); return; }
-    this.send(0, 0, actor.energy >= 28 && (hostile.kind === "keeper" || actor.family !== "moth") ? "skill" : "attack");
+    this.send(0, 0, actor.energy >= 28 && (hostile.kind !== "guard" || actor.family !== "moth") ? "skill" : "attack");
   }
   private distance(target: ActorState) { return Math.hypot(target.x - this.me.x, target.z - this.me.z); }
 }
@@ -168,8 +168,9 @@ test("two players clear the chapter, see identical hit confirms, and keep reward
     await until("logged optional lore", asyncProfileProbe(alpha.profile, "log"));
     await Promise.all([a.go(-1.9, 0), b.go(-2.6, .65)]);
     await fight([a, b], "route");
-    await a.go(8.3, 0);
-    first.send("interact");
+    const entrant = a.me.hp > 0 ? a : b;
+    await entrant.go(8.3, 0);
+    entrant.room.send("interact");
     await until("relay room", () => other.state.stage === 1 && other.state.status === "combat");
     await fight([a, b], "signal");
     const survivor = a.me.hp > 0 ? a : b;

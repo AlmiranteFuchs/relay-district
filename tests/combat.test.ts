@@ -89,3 +89,16 @@ test("a mastery record requires battle rank three after a morph", () => {
   assert.equal((p.move as Move | null)?.kind, "mastery");
   assert.equal(p.energy, 60);
 });
+
+test("an enemy waits for the target's next attack opening when that slot is occupied", () => {
+  const player = makePlayer("target", "Courier", "Neri", "moth");
+  player.x = 0;
+  const enemy = makeEnemy("crawler", "skitter", 1, 0);
+  const events: CombatEvent[] = [];
+  stepEnemy(enemy, [player], 1, events, () => false);
+  assert.notEqual(enemy.phase, "windup");
+  assert.equal(events.length, 0);
+  stepEnemy(enemy, [player], 2, events, (id) => id === player.id);
+  assert.equal(enemy.phase, "windup");
+  assert.equal(events[0]?.type, "windup");
+});

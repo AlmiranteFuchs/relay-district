@@ -231,7 +231,10 @@ export function stepPlayer(player: Player, input: Axes, action: Action | undefin
   gravity(player);
 }
 
-export function stepEnemy(enemy: Enemy, players: Iterable<Player>, tick: number, events: CombatEvent[]) {
+export function stepEnemy(
+  enemy: Enemy, players: Iterable<Player>, tick: number, events: CombatEvent[],
+  canWindUp: (target: string) => boolean = () => true,
+) {
   gravity(enemy);
   if (!enemy.hp || enemy.kind === "dummy") return;
   if (enemy.ticks > 0) enemy.ticks--;
@@ -281,6 +284,7 @@ export function stepEnemy(enemy: Enemy, players: Iterable<Player>, tick: number,
   const dz = nearest.z - enemy.z;
   if (Math.abs(dx) > 0.1) enemy.facing = Math.sign(dx);
   if (Math.abs(dx) <= 1.44 * size && Math.abs(dz) <= 0.65 * size) {
+    if (!canWindUp(nearest.id)) return;
     enemy.phase = "windup";
     enemy.ticks = size === 1.5 ? 52 : size > 1 ? 38 : 32;
     enemy.target = nearest.id;
