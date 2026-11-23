@@ -8,6 +8,7 @@ import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
 import { BAY_FOUR_TICKET, RELAY_PENNANT, type Action, type Family, type Mission, type Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
+import { DISPATCH_INVITE, type DispatchInvitation } from "../packages/shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, DEPARTURE_REINFORCEMENT_TICKS,
   routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
 
@@ -95,6 +96,100 @@ test("four clients join by code, rooms stay isolated, and a participant reconnec
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     server.game.simulateLatency(0);
+    await server.stop();
+  }
+});
+
+test("Dispatch delivers private invitations from the mission leader and couriers can opt into the lobby", { timeout: 22000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  const remember = (room: Socket) => {
+    rooms.push(room);
+    return connectHandlers(room);
+  };
+  try {
+    const [alpha, beta, gamma, observer, locked, outside] =
+      await Promise.all(["Aster", "Beta", "Gamma", "Observer", "Locked", "Outside"].map((name) => player(origin, name)));
+    for (const account of [alpha, beta, gamma, observer, outside]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "dispatch-unlock", "chapter");
+    }
+    const host = remember(await alpha.sdk.create("plaza") as Socket);
+    const [blue, green, bystander, lockedCourier] = await Promise.all([beta, gamma, observer, locked].map(async (account) =>
+      remember(await account.sdk.joinById(host.roomId) as Socket)));
+    const otherPlaza = remember(await outside.sdk.create("plaza") as Socket);
+    await Promise.all(rooms.map(local));
+    const invitations = new Map<string, DispatchInvitation[]>();
+    for (const room of [host, blue, green, bystander, lockedCourier, otherPlaza]) {
+      const list: DispatchInvitation[] = [];
+      invitations.set(room.sessionId, list);
+      room.onMessage(DISPATCH_INVITE, (notice: DispatchInvitation) => { list.push(notice); });
+    }
+    const notices = (room: Socket) => {
+      const list: string[] = [];
+      room.onMessage("notice", (notice: string) => { list.push(notice); });
+      return list;
+    };
+    const hostNotices = notices(host);
+    const nonleaderNotices = notices(bystander);
+    const mission = remember(await alpha.sdk.create("mission", { mission: "night" }) as Socket);
+    await local(mission);
+    const leaderNotices = notices(mission);
+    const sendInvites = (room: Socket, targets: Socket[]) =>
+      room.send(DISPATCH_INVITE, { roomId: mission.roomId, targets: targets.map((target) => target.sessionId) });
+
+    sendInvites(bystander, [blue]);
+    await until("the server rejects a nonleader invitation", () => nonleaderNotices.some((notice) => notice.includes("Only the leader")));
+    sendInvites(host, [blue, green, bystander, lockedCourier]);
+    await until("the server bounds the batch", () => hostNotices.some((notice) => notice.includes("up to three couriers")));
+    sendInvites(host, [lockedCourier, otherPlaza]);
+    await until("the host sees the progress and plaza filters", () => leaderNotices.some((notice) =>
+      notice.includes("No invitations were sent") && notice.includes("locked for Locked") && notice.includes("no longer in this plaza")));
+    await assert.rejects(locked.sdk.joinById(mission.roomId), /Clear The Last Crossing/);
+
+    const training = remember(await alpha.sdk.create("mission", { mission: "training" }) as Socket);
+    await local(training);
+    const trainingNotices = notices(training);
+    host.send(DISPATCH_INVITE, { roomId: training.roomId, targets: [blue.sessionId] });
+    await until("solo practice declines invitations", () => trainingNotices.some((notice) => notice.includes("one courier")));
+
+    assert.ok([...invitations.values()].every((list) => !list.length));
+    sendInvites(host, [blue, blue, green]);
+    sendInvites(host, [bystander]);
+    await host.leave();
+    await until("the invited couriers receive the offer", () =>
+      invitations.get(blue.sessionId)?.length === 1 && invitations.get(green.sessionId)?.length === 1);
+    await until("the lobby confirms two invites and blocks a second batch", () =>
+      leaderNotices.some((notice) => notice.includes("sent to 2 couriers")) &&
+      leaderNotices.some((notice) => notice.includes("already been sent")));
+    const expected = { roomId: mission.roomId, inviter: "Aster", mission: "night" };
+    assert.deepEqual(invitations.get(blue.sessionId), [expected]);
+    assert.deepEqual(invitations.get(green.sessionId), [expected]);
+    for (const room of [host, bystander, lockedCourier, otherPlaza]) assert.deepEqual(invitations.get(room.sessionId), []);
+    assert.equal(mission.state.actors.size, 1);
+    assert.equal(blue.state.kind, "plaza");
+    assert.equal(green.state.kind, "plaza");
+
+    const invitees = [{ account: beta, plaza: blue }, { account: gamma, plaza: green }];
+    const accepted = await Promise.all(invitees.map(async ({ account, plaza }) => {
+      const invite = invitations.get(plaza.sessionId)![0];
+      const joined = remember(await account.sdk.joinById(invite.roomId) as Socket);
+      await plaza.leave();
+      return joined;
+    }));
+    const { id } = await (await observer.request("rooms/" + mission.state.code)).json() as { id: string };
+    const manual = remember(await observer.sdk.joinById(id) as Socket);
+    await Promise.all([...accepted, manual].map(local));
+    await until("the invited and manual couriers are in the same lobby", () => mission.state.actors.size === 4);
+    accepted[0].send("begin");
+    await delay(150);
+    assert.equal(mission.state.status, "lobby");
+    mission.send("begin");
+    await until("all four couriers see the leader start", () =>
+      [mission, ...accepted, manual].every((room) => room.state.status === "approach"));
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();
   }
 });

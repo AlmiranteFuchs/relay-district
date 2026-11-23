@@ -13,6 +13,8 @@ npm run dev
 
 Open [the local client](http://127.0.0.1:5173/). Open Dispatch, create a chapter room, and share its six-character code. A second tab in the same browser can open [a separate guest profile](http://127.0.0.1:5173/?guest=friend). Guests keep separate saves by browser origin and guest name.
 
+To invite players you meet in the plaza, expand **Invite couriers** in Dispatch and select up to three names before creating a room. Each selected courier can choose **Join crew** in their own Dispatch panel. Wait for them to appear in the mission roster before starting. Players can still use the room code, and each can use **Return to plaza** when the job is over.
+
 Run `npm run dev:lan` to allow players on the same trusted network to open your machine’s port **5173**. The room and guest API use port **2567**. The browser infers the room-server address from the page host. For a local release build, run `npm run build` followed by `npm start`, then open [the bundled game](http://127.0.0.1:2567/). To test latency, set `RELAY_LATENCY_MS=100` before starting the server. Set `RELAY_DB` to use a different SQLite save file. The default save lives under the ignored `.relay/` folder.
 
 ## Play

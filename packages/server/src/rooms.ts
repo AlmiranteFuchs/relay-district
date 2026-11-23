@@ -1,11 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
+import { matchMaker, Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
   battleRank, BAY_FOUR_TICKET, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, RELAY_PENNANT, SIGNAL_TAG, TICK_RATE,
   type Action, type Family, type Mission, type Profile,
 } from "../../shared/src/content.ts";
 import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
+import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, type DispatchInvitation } from "../../shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
   DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, GameState } from "./wire.ts";
@@ -32,6 +33,10 @@ interface Entry {
 
 function asRecord(input: unknown): Record<string, unknown> {
   return input && typeof input === "object" ? input as Record<string, unknown> : {};
+}
+
+function isColyseusId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
 }
 
 export class GameRoom extends Room<{ state: GameState }> {
@@ -195,6 +200,7 @@ export class PlazaRoom extends GameRoom {
 
   onCreate() {
     this.install();
+    this.onMessage(DISPATCH_INVITE, (client, raw: unknown) => this.sendDispatchInvites(client, raw));
     this.onMessage("customize", (client, raw: unknown) => {
       const entry = this.players.get(client.sessionId);
       if (entry) this.applyProfile(entry, store.customize(entry.profileId, asRecord(raw)));
@@ -221,6 +227,23 @@ export class PlazaRoom extends GameRoom {
       client.send("notice", result.notice);
       if (result.ok) this.broadcast("combat", { type: "arm", source: entry.player.id, x: entry.player.x, z: entry.player.z });
     });
+  }
+
+  private sendDispatchInvites(client: Client, raw: unknown) {
+    const sender = this.players.get(client.sessionId);
+    if (!sender?.connected) return;
+    const { roomId, targets } = asRecord(raw);
+    if (!isColyseusId(roomId) || !Array.isArray(targets) || !targets.length
+      || targets.length > DISPATCH_INVITE_LIMIT || !targets.every(isColyseusId)) {
+      client.send("notice", "Select up to three couriers from this plaza to invite.");
+      return;
+    }
+    const mission = matchMaker.getLocalRoomById(roomId);
+    if (!(mission instanceof MissionRoom)) {
+      client.send("notice", "That mission lobby is no longer open.");
+      return;
+    }
+    mission.inviteFromPlaza(sender, [...new Set(targets)].map((target) => this.players.get(target)));
   }
 
   protected override interact(client: Client) {
@@ -277,6 +300,7 @@ export class MissionRoom extends GameRoom {
   private waveReady = 0;
   private serial = 0;
   private watchCommended = true;
+  private dispatchInvitesSent = false;
 
   onCreate(raw: unknown) {
     const options = asRecord(raw);
@@ -310,6 +334,52 @@ export class MissionRoom extends GameRoom {
       entry.player.rank = 1;
       entry.player.mastered = false;
     }
+  }
+
+  inviteFromPlaza(sender: Entry, targets: (Entry | undefined)[]) {
+    const leader = this.players.get(this.state.leader);
+    if (this.state.status !== "lobby" || !leader?.connected || leader.profileId !== sender.profileId) {
+      sender.client.send("notice", "Only the leader of an open mission lobby can invite couriers.");
+      return;
+    }
+    if (this.mission === "training") {
+      leader.client.send("notice", "The practice floor is for one courier.");
+      return;
+    }
+    if (this.dispatchInvitesSent) {
+      leader.client.send("notice", "Dispatch invitations have already been sent for this room.");
+      return;
+    }
+
+    const invitation: DispatchInvitation = { roomId: this.roomId, mission: this.mission, inviter: leader.player.name };
+    const present = new Set([...this.players.values()].map((entry) => entry.profileId));
+    const slots = this.maxClients - this.players.size;
+    const skipped: string[] = [];
+    let sent = 0;
+    for (const target of targets) {
+      if (!target?.connected) {
+        skipped.push("A selected courier is no longer in this plaza.");
+        continue;
+      }
+      if (present.has(target.profileId)) {
+        skipped.push(target.player.name + " is already in the mission lobby.");
+        continue;
+      }
+      const locked = missionLockReason(this.mission, store.profile(target.profileId).clears);
+      if (locked) {
+        skipped.push("The job is locked for " + target.player.name + ". " + locked);
+        continue;
+      }
+      if (sent >= slots) {
+        skipped.push("There is no open seat for " + target.player.name + ".");
+        continue;
+      }
+      target.client.send(DISPATCH_INVITE, invitation);
+      sent++;
+    }
+    this.dispatchInvitesSent = sent > 0;
+    const result = sent ? (sent === 1 ? "Invitation sent." : "Invitations sent to " + sent + " couriers.") : "No invitations were sent.";
+    leader.client.send("notice", [result, ...skipped].join(" "));
   }
 
   override onLeave(client: Client) {
