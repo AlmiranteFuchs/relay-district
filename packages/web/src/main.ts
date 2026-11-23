@@ -1,5 +1,6 @@
 import { Client, type Room } from "@colyseus/sdk";
 import { COMPANION_PLAY, type CompanionPlayMessage } from "../../shared/src/companion-play.ts";
+import type { CrewAssist } from "../../shared/src/crew-assists.ts";
 import { ARM_TICKS, canRescueIn, DT, rescueDistance, RESCUE_RANGE, RESCUE_TICKS, stepWalk, type CombatEvent, type Input } from "../../shared/src/combat.ts";
 import { availableTrinkets, battleRank, FORMS, isFamily, isMission, JOBS, LORE, missionLockReason, ROOM_THEMES, type Action, type Family,
   type Mission, type Profile } from "../../shared/src/content.ts";
@@ -13,7 +14,10 @@ import { GameAudio } from "./audio.ts";
 import { CompanionRoomPlay } from "./companion-room-play.ts";
 import "./style.css";
 
-type Wire = Omit<WorldView, "actors"> & { actors: { forEach(callback: (actor: ViewActor, id: string) => void): void } };
+type Wire = Omit<WorldView, "actors"> & {
+  actors: { forEach(callback: (actor: ViewActor, id: string) => void): void };
+  crewAssists: Iterable<CrewAssist>;
+};
 type RelayRoom = Room<any, Wire>;
 type Panel = "" | "dispatch" | "lobby" | "room" | "room-play" | "workbench" | "confirm";
 
@@ -222,6 +226,7 @@ function attach(next: RelayRoom) {
     if (room !== next) return;
     sessionStorage.setItem(resumeKey, next.reconnectionToken);
     connected = true; setConnection("Online"); notify("Back on the line.");
+    if (panel === "lobby" && world?.mission === "bayrelay") drawPanel();
   });
   next.onLeave(() => {
     if (room !== next) return;
@@ -354,6 +359,19 @@ function roomPortrait() {
     + "<strong>" + escape(profile.companion) + "</strong><small>" + FORMS[profile.family].name + " • " + escape(profile.trinket) + "</small></div>";
 }
 
+function crewAssistReport() {
+  const assists = Array.from(room?.state.crewAssists ?? []);
+  const entries = assists.map(({ kind, source, target, station }) => item(
+    escape(source),
+    kind === "rescue" ? "Revived " + escape(target) + "."
+      : escape(station) + " gave " + escape(target) + " an opening.",
+  )).join("");
+  return '<section class="panel-grid" aria-labelledby="crew-assists-title">'
+    + '<h2 id="crew-assists-title">Crew assists</h2>'
+    + (entries || '<p class="quiet">Cover a crewmate with a call box or revive them to record an assist.</p>')
+    + "</section>";
+}
+
 function drawPanel() {
   if (!panel || !profile) return;
   let title = "";
@@ -382,6 +400,7 @@ function drawPanel() {
         else if (world.status === "lobby") body += "<p>Waiting for the room leader.</p>";
       } else body += button("Resume mission", "resume");
       body += " " + button("Return to plaza", "plaza");
+      if (world?.mission === "bayrelay" && world.status === "complete") body += crewAssistReport();
     }
   } else if (panel === "room") {
     title = escape(profile.companion) + "’s room";
@@ -552,6 +571,7 @@ function updateHUD(actor?: ViewActor) {
       route: world.mission === "archive" ? archiveRouteObjective(world) : "Use the blue door marker to enter the relay room.",
       signal: signalObjective(world),
       complete: world.mission === "departure" ? "Job complete. Watch the train or use Mission to return to the plaza."
+        : world.mission === "bayrelay" ? "Job complete. Open Mission to see the crew report."
         : "Job complete. Use Mission to return to the plaza.",
       failed: "Party down. Retry from the Mission panel.",
     })[world.status] ?? "";

@@ -1,4 +1,5 @@
-import { defineTypes, MapSchema, Schema } from "@colyseus/schema";
+import { ArraySchema, defineTypes, MapSchema, Schema } from "@colyseus/schema";
+import type { CrewAssist } from "../../shared/src/crew-assists.ts";
 
 export class ActorState extends Schema {
   declare x: number;
@@ -45,6 +46,19 @@ defineTypes(ActorState, {
   rescued: "boolean", rescueTarget: "string", rescueTicks: "uint8", signalTag: "boolean", bayFourTicket: "boolean", relayPennant: "boolean",
 });
 
+export class CrewAssistState extends Schema implements CrewAssist {
+  declare kind: CrewAssist["kind"];
+  declare source: string;
+  declare target: string;
+  declare station: string;
+
+  constructor() {
+    super();
+    Object.assign(this, { kind: "call", source: "", target: "", station: "" });
+  }
+}
+defineTypes(CrewAssistState, { kind: "string", source: "string", target: "string", station: "string" });
+
 export class GameState extends Schema {
   declare kind: string;
   declare mission: string;
@@ -57,13 +71,16 @@ export class GameState extends Schema {
   declare frame: number;
   declare practice: boolean;
   declare actors: MapSchema<ActorState>;
+  declare crewAssists: ArraySchema<CrewAssistState>;
   constructor() {
     super();
     Object.assign(this, { kind: "plaza", mission: "", status: "plaza", code: "", leader: "",
-      stage: 0, wave: 0, readerMask: 0, frame: 0, practice: false, actors: new MapSchema<ActorState>() });
+      stage: 0, wave: 0, readerMask: 0, frame: 0, practice: false, actors: new MapSchema<ActorState>(),
+      crewAssists: new ArraySchema<CrewAssistState>() });
   }
 }
 defineTypes(GameState, {
   kind: "string", mission: "string", status: "string", code: "string", leader: "string",
   stage: "uint8", wave: "uint8", readerMask: "uint8", frame: "uint32", practice: "boolean", actors: { map: ActorState },
+  crewAssists: { array: CrewAssistState },
 });

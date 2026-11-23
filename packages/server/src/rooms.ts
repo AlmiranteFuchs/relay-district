@@ -12,7 +12,7 @@ import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
   DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
-import { ActorState, GameState } from "./wire.ts";
+import { ActorState, CrewAssistState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
 
 let store: Store;
@@ -63,6 +63,14 @@ interface SignalRound {
   id: string;
   signals: Signal[];
   startedAt: number;
+}
+
+interface RelayOpening {
+  callerId: string;
+  callerName: string;
+  station: string;
+  enemyIds: Set<string>;
+  lastFrame: number;
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -399,6 +407,7 @@ export class MissionRoom extends GameRoom {
   private serial = 0;
   private watchCommended = true;
   private dispatchInvitesSent = false;
+  private relayOpening?: RelayOpening;
 
   onCreate(raw: unknown) {
     const options = asRecord(raw);
@@ -505,9 +514,11 @@ export class MissionRoom extends GameRoom {
     this.state.stage = 0;
     this.state.wave = 0;
     this.state.readerMask = 0;
+    this.state.crewAssists.clear();
     this.state.status = "approach";
     this.waveReady = 0;
     this.watchCommended = true;
+    this.relayOpening = undefined;
     this.clearEnemies();
     [...this.players.values()].forEach((entry, index) => {
       entry.rescue = undefined;
@@ -577,6 +588,7 @@ export class MissionRoom extends GameRoom {
   }
 
   protected override afterStep() {
+    this.creditRelayOpening();
     if (this.mission === "watch" && this.watchCommended && this.state.status === "combat"
       && this.actors().some((player) => player.hp === 0)) {
       this.watchCommended = false;
@@ -728,6 +740,11 @@ export class MissionRoom extends GameRoom {
       target.rescued = true;
       entry.rescue = undefined;
       this.events.push({ type: "revive", source: entry.player.id, target: target.player.id, x: target.player.x, z: target.player.z });
+      if (this.mission === "bayrelay") {
+        this.state.crewAssists.push(new CrewAssistState().assign({
+          kind: "rescue", source: entry.player.name, target: target.player.name, station: "",
+        }));
+      }
     }
   }
 
@@ -815,14 +832,52 @@ export class MissionRoom extends GameRoom {
       else entry.client.send("notice", point.title + " recorded. Check the other call box.");
       return;
     }
+    this.relayOpening = undefined;
+    let saved: Entry | undefined;
+    const enemyIds = new Set<string>();
     for (const enemy of this.enemies.values()) {
       if (!enemy.hp) continue;
+      if (!saved && (enemy.phase === "windup" || (enemy.phase === "active" && !enemy.hit.has(enemy.target)))) {
+        const target = this.players.get(enemy.target);
+        if (target !== entry && target?.connected && target.player.hp > 0) saved = target;
+      }
+      enemyIds.add(enemy.id);
       enemy.ticks = enemy.phase === "hurt" ? Math.max(enemy.ticks, BAY_RELAY_STAGGER_TICKS) : BAY_RELAY_STAGGER_TICKS;
       enemy.phase = "hurt";
       enemy.target = "";
       this.broadcast("combat", { type: "interrupt", source: enemy.id, x: enemy.x, z: enemy.z } satisfies CombatEvent);
     }
+    if (saved) {
+      this.state.crewAssists.push(new CrewAssistState().assign({
+        kind: "call", source: entry.player.name, target: saved.player.name, station: point.title,
+      }));
+    } else if (enemyIds.size && this.players.size > 1) {
+      this.relayOpening = {
+        callerId: entry.player.id, callerName: entry.player.name, station: point.title,
+        enemyIds, lastFrame: this.state.frame + BAY_RELAY_STAGGER_TICKS,
+      };
+    }
     this.broadcast("notice", point.title + " recorded. The patrol is staggered.");
+  }
+
+  private creditRelayOpening() {
+    const opening = this.relayOpening;
+    if (!opening) return;
+    if (this.state.status !== "combat" || this.state.frame > opening.lastFrame) {
+      this.relayOpening = undefined;
+      return;
+    }
+    for (const event of this.events) {
+      if (event.type !== "hit" || event.source === opening.callerId || !event.target || !opening.enemyIds.has(event.target)) continue;
+      const teammate = this.players.get(event.source);
+      if (!teammate?.connected) continue;
+      this.state.crewAssists.push(new CrewAssistState().assign({
+        kind: "call", source: opening.callerName, target: teammate.player.name, station: opening.station,
+      }));
+      this.relayOpening = undefined;
+      return;
+    }
+    if (this.state.frame === opening.lastFrame) this.relayOpening = undefined;
   }
 
   private interactSignal(entry: Entry, point: Marker) {

@@ -57,6 +57,10 @@ async function local(room: Socket) {
   return until("local actor", () => room.state?.actors?.get(room.sessionId));
 }
 
+function crewAssists(room: Socket) {
+  return [...room.state.crewAssists].map(({ kind, source, target, station }) => ({ kind, source, target, station }));
+}
+
 test("four clients join by code, rooms stay isolated, and a participant reconnects", { timeout: 18000 }, async () => {
   const server = await runServer({ port: 0, database: ":memory:", latency: 100 });
   const origin = "http://127.0.0.1:" + server.port;
@@ -522,6 +526,7 @@ test("a recalled companion can rescue a courier once, with the server confirming
     await until("both clients receive the rescue event", () => confirmations.every((events) => events.length === 1));
     const expected = { type: "revive", source: first.sessionId, target: other.sessionId, x: -1, z: 0 };
     assert.deepEqual(confirmations, [[expected], [expected]]);
+    assert.deepEqual(rooms.map(crewAssists), [[], []], "other missions do not record Bay Four rescue credit");
 
     casualty.hp = 0;
     await until("courier downed again", () => b.me.hp === 0);
@@ -1167,6 +1172,7 @@ test("Bay Four Relay calls interrupt the patrol and unlock the Relay Pennant aft
     await fight([a, b], "signal", 36000);
     await until("both players still have a call left after the patrol is clear", () => missionState("signal"));
     assert.equal(first.state.readerMask, west.readerBit);
+    const beforeLastCall = [first, other].map(crewAssists);
     for (const account of party) assert.equal((await account.profile()).bayRelayComplete, undefined);
     const plaza = connectHandlers(await alpha.sdk.joinOrCreate("plaza") as Socket);
     rooms.push(plaza);
@@ -1187,6 +1193,7 @@ test("Bay Four Relay calls interrupt the patrol and unlock the Relay Pennant aft
     operator.room.send("interact");
     await until("the East Call completes the contract", () => missionState("complete") && first.state.readerMask === BAY_RELAY_CALLS_COMPLETE);
     assert.deepEqual(observes, [[west.x, east.x], [west.x, east.x]]);
+    assert.deepEqual([first, other].map(crewAssists), beforeLastCall, "the post-fight call does not credit an assist");
     for (const [index, account] of party.entries()) {
       const profile = await account.profile();
       assert.equal(profile.bayRelayComplete, true);
@@ -1202,6 +1209,155 @@ test("Bay Four Relay calls interrupt the patrol and unlock the Relay Pennant aft
     await until("the equipped pennant reaches actor state", () => plaza.state.actors.get(plaza.sessionId)?.relayPennant);
     first.send("begin");
     await until("replay resets both call boxes", () => missionState("combat") && [first, other].every((room) => room.state.readerMask === 0));
+    assert.deepEqual([first, other].map(crewAssists), [[], []]);
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("Bay Four Relay shares call and rescue credits and resets them on retry", { timeout: 22000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const party = await Promise.all(["Aster", "Ivo", "Sena"].map((name) => player(origin, name)));
+    for (const account of party) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "departure-unlock", "departure");
+    }
+    const first = connectHandlers(await party[0].sdk.create("mission", { mission: "bayrelay" }) as Socket);
+    rooms.push(first);
+    for (const account of party.slice(1)) rooms.push(connectHandlers(await account.sdk.joinById(first.roomId) as Socket));
+    await Promise.all(rooms.map(local));
+    const [a, b, c] = rooms.map((room) => new TestCourier(room));
+    const [west, east] = routeMarkers("bayrelay", 0);
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    const place = (courier: TestCourier, x: number, z: number) =>
+      Object.assign(mission["players"].get(courier.room.sessionId)!.player, { x, z, facing: 1 });
+    const parkPatrol = () => {
+      const patrol = [...mission["enemies"].values()];
+      for (const enemy of patrol) Object.assign(enemy, { phase: "recover", ticks: 600, target: "", x: 9, z: -4 });
+      return patrol;
+    };
+    const armIvo = async () => {
+      if (!b.me.armed) b.send(0, 0, "morph");
+      await until("Ivo has drawn the coil staff", () => b.me.armed && b.me.phase === "idle");
+    };
+    const awaitCall = (mask: number) => until("all clients see the call", () => rooms.every((room) => room.state.readerMask === mask));
+    const assertShared = (expected: ReturnType<typeof crewAssists>) => {
+      for (const room of rooms) assert.deepEqual(crewAssists(room), expected);
+    };
+    const hits: CombatEvent[] = [];
+    b.room.onMessage("combat", (event: CombatEvent) => { if (event.type === "hit" && event.source === b.room.sessionId) hits.push(event); });
+    const strike = async (enemyId: string) => {
+      const before = hits.length;
+      b.send(0, 0, "attack");
+      await until("server confirmed Ivo's hit", () => hits.slice(before).some((event) => event.target === enemyId));
+      return hits.slice(before);
+    };
+    const retry = async () => {
+      for (const { player: actor } of mission["players"].values()) actor.hp = 0;
+      await until("the test wipe reaches everyone", () => rooms.every((room) => room.state.status === "failed"));
+      first.send("begin");
+      await until("retry starts with empty boxes and record", () => rooms.every((room) => room.state.status === "combat"
+        && room.state.readerMask === 0 && room.state.crewAssists.length === 0));
+    };
+
+    first.send("begin");
+    await until("all clients enter the contract", () => rooms.every((room) => room.state.status === "combat"));
+    const [runner, gateback] = parkPatrol();
+    place(a, west.x, west.z);
+    place(b, 0, 0);
+    place(c, east.x, east.z);
+    await armIvo();
+    Object.assign(runner, { x: 1.25, z: 0, phase: "windup", ticks: 32, target: b.room.sessionId, strikeX: 0, strikeZ: 0 });
+    await until("the runner's telegraph reaches the clients", () => rooms.every((room) => room.state.actors.get(runner.id)?.phase === "windup"));
+    a.room.send("interact");
+    await awaitCall(west.readerBit!);
+    const westCredit = { kind: "call", source: "Aster", target: "Ivo", station: west.title } as const;
+    assertShared([westCredit]);
+    await strike(runner.id);
+    await until("the follow-up swing ends", () => b.me.phase === "idle");
+    assertShared([westCredit]);
+
+    parkPatrol();
+    Object.assign(gateback, { x: 1.25, z: 0 });
+    c.room.send("interact");
+    await awaitCall(BAY_RELAY_CALLS_COMPLETE);
+    assertShared([westCredit]);
+    await strike(gateback.id);
+    await until("everyone sees the converted East Call", () => rooms.every((room) => room.state.crewAssists.length === 2));
+    const eastCredit = { kind: "call", source: "Sena", target: "Ivo", station: east.title } as const;
+    assertShared([westCredit, eastCredit]);
+
+    parkPatrol();
+    let reconnected = false;
+    b.room.onReconnect.once(() => { reconnected = true; });
+    b.room.connection.close(4010, "test drop at the call box");
+    await until("Ivo reconnects with the crew record", () => reconnected && first.state.actors.get(b.room.sessionId)?.connected
+      && b.room.state.crewAssists.length === 2);
+    assertShared([westCredit, eastCredit]);
+
+    place(a, 0, 0);
+    const casualty = place(b, 1, 0);
+    casualty.hp = 0;
+    await until("the crew sees Ivo downed", () => first.state.actors.get(b.room.sessionId)?.hp === 0);
+    a.room.send("interact");
+    await until("the rescue begins", () => a.me.rescueTarget === b.room.sessionId);
+    a.send(0, 0, "jump");
+    await until("the canceling jump ends", () => !a.me.rescueTarget && a.me.phase === "idle");
+    assert.equal(b.me.hp, 0);
+    assertShared([westCredit, eastCredit]);
+    a.room.send("interact");
+    await until("the completed rescue reaches the crew", () => b.me.hp === RESCUE_HEALTH
+      && rooms.every((room) => room.state.crewAssists.length === 3));
+    const rescueCredit = { kind: "rescue", source: "Aster", target: "Ivo", station: "" } as const;
+    assertShared([westCredit, eastCredit, rescueCredit]);
+
+    await retry();
+    const [selfTarget, followThrough] = parkPatrol();
+    place(a, west.x, west.z);
+    place(b, 0, 0);
+    place(c, east.x, east.z);
+    await armIvo();
+    Object.assign(selfTarget, {
+      x: west.x + 1.25, z: west.z, phase: "windup", ticks: 32, target: a.room.sessionId, strikeX: west.x, strikeZ: west.z,
+    });
+    a.room.send("interact");
+    await awaitCall(west.readerBit!);
+    assertShared([]);
+    // The same stroke hits two affected enemies. Only the latest call can earn credit.
+    Object.assign(selfTarget, { x: 1.25, z: -.2 });
+    Object.assign(followThrough, { x: 1.25, z: .2 });
+    c.room.send("interact");
+    await awaitCall(BAY_RELAY_CALLS_COMPLETE);
+    assertShared([]);
+    const multiHit = await strike(followThrough.id);
+    assert.deepEqual(multiHit.map((event) => event.target), [selfTarget.id, followThrough.id]);
+    await until("everyone sees only the latest call credit", () => rooms.every((room) => room.state.crewAssists.length === 1));
+    assertShared([eastCredit]);
+
+    await retry();
+    parkPatrol();
+    place(a, west.x, west.z);
+    place(b, 0, 0);
+    await armIvo();
+    a.room.send("interact");
+    await awaitCall(west.readerBit!);
+    const callFrame = first.state.frame;
+    const beforeWhiff = hits.length;
+    b.send(0, 0, "attack");
+    await until("the server shows Ivo's whiff", () => b.me.phase === "attack");
+    await until("the whiff ends", () => b.me.phase === "idle");
+    assert.equal(hits.length, beforeWhiff);
+    assertShared([]);
+    await until("the window expires", () => first.state.frame > callFrame + BAY_RELAY_STAGGER_TICKS);
+    const [lateTarget] = parkPatrol();
+    Object.assign(lateTarget, { x: 1.25, z: 0 });
+    await strike(lateTarget.id);
+    await until("the late strike ends", () => b.me.phase === "idle");
+    assertShared([]);
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

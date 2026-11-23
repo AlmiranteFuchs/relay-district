@@ -18,6 +18,7 @@ The project has a shared plaza for up to 16 LAN players, four-player instance ro
 | Dispatch invitations | The mission leader can invite up to three couriers from the same plaza. Each courier chooses whether to join. The SDK test checks private delivery, eligibility, and a full lobby. Three Chrome clients verified invitation and room-code joins, a shared start, and return to the same plaza. | Keep a party together across multiple jobs and test it on two physical devices. |
 | Recent crew | Dispatch can select available teammates from the most recent group job for 30 minutes. SDK tests cover fresh plaza sessions, expiry, and mission eligibility. Three Chrome clients verified that returned teammates can be invited to a second job. | Try the two-job flow on physical devices and test how groups regroup when a plaza fills. |
 | Signal Echo | The companion room offers a repeatable four-pulse game. SDK clients verified private rounds, expiry, cancellation, and one bond grant through the care cooldown. Isolated Chrome runs at 16:9 and 4:3 verified on-screen cues, two sound cues, muted keyboard play, reduced motion, and bond after reload. | Observe whether couriers choose to play between jobs during a four-player session. |
+| Bay Four crew report | The completed run shows call-box assists and rescues in Mission. Three SDK clients verified interruptions, follow-up hits, canceled and completed rescues, reconnect, and retry. Two Chrome clients at 100 ms simulated round-trip latency saw matching reports at 16:9 and 4:3. | Playtest how often crews coordinate calls across the four fighting styles. |
 
 ## Design references
 
@@ -66,7 +67,7 @@ The chapter, companion, equipment, and social designs below are Relay District p
 
 ## After First Departure
 
-The finale restores the partner records and closes the Last Crossing arc. Bay Four Relay adds a separate replay contract with a different formation and a companion keepsake. Dispatch invitations and last-crew selection let returning players assemble for another job, and Signal Echo gives couriers a short activity with their companion while a crew assembles. The next co-op milestone is recognizing teammates’ assists during a repeatable contract.
+The finale restores the partner records and closes the Last Crossing arc. Bay Four Relay adds a replay contract, a companion keepsake, and a crew report for calls and rescues. Dispatch invitations and last-crew selection let returning players assemble for another job, and Signal Echo gives couriers a short activity with their companion while a crew assembles. The next story milestone is the first route beyond Bay Four.
 
 ## How to mark progress
 
