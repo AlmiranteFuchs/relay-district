@@ -11,7 +11,7 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
 import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
-  DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE,
+  DEPARTURE_REINFORCEMENT_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE,
   VIADUCT_RELAY_TICKS, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, CrewAssistState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
@@ -397,6 +397,10 @@ const viaductWaves = [
   wave(["runner", 2.6, -2.1], ["skitter", 5.2, 2.4]),
   wave(["guard", 8.4, 2.15], ["runner", -3.7, 1.25]),
 ];
+const liftWaves = [
+  wave(["skitter", -2.45, -2.8], ["skitter", 3.85, 2.6]),
+  wave(["guard", 6.1, 1.5], ["runner", 2.7, -2.55]),
+];
 const bayRelayPatrol = wave(["runner", -2.85, -1.3], ["guard", 4.75, .9], ["runner", 7.25, -2.35]);
 const watchWaves = [
   wave(["skitter", -2.5, 2.1], ["guard", 3.8, -1.7]),
@@ -556,6 +560,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "viaduct") {
       this.spawn(viaductWaves[0]);
       this.story(JOBS.viaduct.title, "The 05:20 train crossed into the river fog. Your partner can still hear the hand switches Mara's crew used to keep the east feed running. Clear the scout patrol and follow the signal.");
+    } else if (this.mission === "lift") {
+      this.spawn(liftWaves[0]);
+      this.story(JOBS.lift.title, "The signal ledger leads to a service lift under the river wall. Clear the upper landing to get to the Brake Wheel.");
     } else if (this.mission === "bayrelay") {
       this.spawn(bayRelayPatrol);
       this.story(JOBS.bayrelay.title, "Dispatch needs both call boxes checked. Use each box with a recalled partner. During combat, each call interrupts the patrol once. Clear the platform to sign off.");
@@ -598,7 +605,7 @@ export class MissionRoom extends GameRoom {
 
   protected override afterStep() {
     this.creditRelayOpening();
-    this.expireViaductRelay();
+    if (this.mission === "viaduct") this.expireViaductRelay();
     if (this.mission === "watch" && this.watchCommended && this.state.status === "combat"
       && this.actors().some((player) => player.hp === 0)) {
       this.watchCommended = false;
@@ -628,6 +635,7 @@ export class MissionRoom extends GameRoom {
       this.story("Signal lost", "The party is down. Use Mission to retry the job.");
       return;
     }
+    if (this.mission === "lift" && this.state.stage === 2) this.advanceLift();
     if (this.mission === "departure" && this.state.stage === 1 && this.state.wave === 0) {
       const keeper = [...this.enemies.values()].find((enemy) => enemy.kind === "keeper");
       if (keeper && keeper.hp * 2 <= keeper.maxHp) {
@@ -700,6 +708,18 @@ export class MissionRoom extends GameRoom {
         this.story("The hand switches", "Recall your partner and start at West Relay. The east post needs to answer within ten seconds. Two couriers can split up, or you can cross the lane yourself.");
       } else {
         this.story("East feed restored", "The east relay is holding. Bring your recalled partner to the signal ledger to see where the feed goes next.");
+      }
+      return;
+    }
+    if (this.mission === "lift") {
+      if (this.state.stage === 0) {
+        this.state.stage = 1;
+        this.state.status = "signal";
+        this.story("Upper landing clear", "Recall your partner at the Brake Wheel to lower the lift. The brake has a bad tooth. Listen for it to catch halfway down.");
+      } else if (this.state.readerMask === LIFT_PHASE.docked) {
+        this.state.stage = 3;
+        this.state.status = "signal";
+        this.story("Lower landing clear", "The lift has reached the bottom and the guard is down. Bring your recalled partner to the Lift Log.");
       }
       return;
     }
@@ -800,6 +820,8 @@ export class MissionRoom extends GameRoom {
       this.interactArchive(entry, point);
     } else if (this.mission === "viaduct") {
       this.interactViaduct(entry, point);
+    } else if (this.mission === "lift") {
+      this.interactLift(entry, point);
     } else if (this.mission === "bayrelay") {
       this.interactBayRelay(entry, point);
     } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register"
@@ -808,10 +830,10 @@ export class MissionRoom extends GameRoom {
     } else client.send("notice", "The passage opens when the lane is safe.");
   }
 
-  private hearSignal(entry: Entry, point: Marker) {
+  private hearSignal(entry: Entry, point: Marker, armedNotice = "Recall your partner with Q and let it answer the reader.") {
     const player = entry.player;
     if (player.armed || player.move?.kind === "arm" || player.move?.kind === "recall") {
-      entry.client.send("notice", "Recall your partner with Q and let it answer the reader.");
+      entry.client.send("notice", armedNotice);
       return false;
     }
     this.broadcast("combat", { type: "observe", source: player.id, x: point.x, z: point.z });
@@ -997,6 +1019,40 @@ export class MissionRoom extends GameRoom {
     this.state.stage = 2;
     this.spawn(viaductWaves[1]);
     this.story("Relay bridged", "The old east feed is carrying current. A Gateback is coming from the far side while a Cable Runner flanks the west post. Arm your partner and keep the line open.");
+  }
+
+  private advanceLift() {
+    if (!this.state.readerUntil || this.state.frame < this.state.readerUntil) return;
+    const jammed = this.state.readerMask === LIFT_PHASE.lowering;
+    this.state.readerMask = jammed ? LIFT_PHASE.jammed : LIFT_PHASE.docked;
+    this.state.readerUntil = 0;
+    this.broadcast("notice", jammed ? "Brake jammed. Recall and reset at the wheel." : "The lift is at the lower landing.");
+  }
+
+  private interactLift(entry: Entry, point: Marker) {
+    const armedNotice = "Recall your partner with Q first.";
+    if (this.state.status === "signal") {
+      if (!this.hearSignal(entry, point, armedNotice)) return;
+      if (point.id === "lift-log") {
+        this.finish();
+        return;
+      }
+      this.state.stage = 2;
+      this.state.readerMask = LIFT_PHASE.lowering;
+      this.state.readerUntil = this.state.frame + LIFT_LEG_TICKS;
+      this.spawn(liftWaves[1]);
+      this.story("Going down", "A Gateback and a Cable Runner are on the lift. When the brake catches, one courier can reset it with a recalled partner while the rest hold off the guard.");
+      return;
+    }
+    if (this.state.status !== "combat" || this.state.stage !== 2) return;
+    if (this.state.readerMask !== LIFT_PHASE.jammed) {
+      entry.client.send("notice", this.state.readerMask === LIFT_PHASE.docked ? "The lift is already docked." : "The brake wheel is already turning.");
+      return;
+    }
+    if (!this.hearSignal(entry, point, armedNotice)) return;
+    this.state.readerMask = LIFT_PHASE.resuming;
+    this.state.readerUntil = this.state.frame + LIFT_LEG_TICKS;
+    this.broadcast("notice", "Brake released. The lift is moving again.");
   }
 
   private finish() {

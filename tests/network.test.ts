@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client, type Room } from "@colyseus/sdk";
 import { matchMaker } from "@colyseus/core";
@@ -13,7 +16,7 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
 import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, DEPARTURE_REINFORCEMENT_TICKS,
-  routeMarkers, TERMINAL_READERS_COMPLETE, VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
+  LIFT_LEG_TICKS, LIFT_PHASE, routeMarkers, TERMINAL_READERS_COMPLETE, VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -1260,6 +1263,126 @@ test("one courier can cross South Viaduct and read the ledger", { timeout: 65000
   } finally {
     await room?.leave();
     await server.stop();
+  }
+});
+
+test("Floodgate Lift requires a recalled brake reset and saves the log for the whole party", { timeout: 78000 }, async () => {
+  const directory = mkdtempSync(join(tmpdir(), "relay-lift-test-"));
+  const database = join(directory, "profiles.sqlite");
+  let server: Awaited<ReturnType<typeof runServer>> | undefined;
+  const rooms: Socket[] = [];
+  try {
+    server = await runServer({ port: 0, database });
+    const origin = "http://127.0.0.1:" + server.port;
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    const party = [alpha, beta];
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      server.store.reward([id], "departure-unlock", "departure");
+      if (account !== guest) server.store.reward([id], "viaduct-unlock", "viaduct");
+    }
+    const initial = await Promise.all(party.map((account) => account.profile()));
+    await assert.rejects(guest.sdk.create("mission", { mission: "lift" }), /Clear South Viaduct/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "lift" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear South Viaduct/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+    const couriers = rooms.map((room) => new TestCourier(room));
+    const [wheel] = routeMarkers("lift", 1);
+    const [resetWheel] = routeMarkers("lift", 2);
+    const [log] = routeMarkers("lift", 3);
+    assert.deepEqual(resetWheel, wheel);
+    const roomPhase = (stage: number, status: string) => rooms.every((room) => room.state.stage === stage && room.state.status === status);
+    const liftPhase = (state: number, deadline: number) => rooms.every((room) =>
+      room.state.readerMask === state && room.state.readerUntil === deadline);
+    const waitForLeg = async (label: string, state: number) => {
+      const deadline = await until(label, () => {
+        const activeDeadline = first.state.readerUntil;
+        return activeDeadline > 0 && liftPhase(state, activeDeadline) ? activeDeadline : undefined;
+      });
+      const ticks = deadline - first.state.frame;
+      assert.ok(ticks > LIFT_LEG_TICKS - 24 && ticks <= LIFT_LEG_TICKS);
+      return deadline;
+    };
+
+    first.send("begin");
+    await until("both players enter the lift approach", () => roomPhase(0, "combat"));
+    await fight(couriers, "signal", 23000);
+    await until("the brake wheel becomes available", () => roomPhase(1, "signal") && liftPhase(LIFT_PHASE.idle, 0));
+    const operator = couriers.find((courier) => courier.me.hp > 0)!;
+    await operator.go(wheel.x, wheel.z);
+    await recallForReader(operator);
+    const notices: string[] = [];
+    operator.room.onMessage("notice", (notice: string) => { notices.push(notice); });
+    const interactAndSync = async () => {
+      operator.room.send("interact");
+      operator.send(0, 0);
+      await until("the server has processed the wheel attempt", () => operator.me.ack === operator.seq);
+    };
+    operator.room.send("interact");
+    const firstDeadline = await waitForLeg("both clients see the lift lowering", LIFT_PHASE.lowering);
+    assert.ok(roomPhase(2, "combat"));
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    const guards = [...mission["enemies"].values()];
+    assert.ok(guards.length > 0 && guards.every((enemy) => enemy.hp > 0));
+    // Keep the real guard alive during both timed legs so docking and combat can be checked independently.
+    for (const enemy of guards) Object.assign(enemy, { phase: "recover", ticks: LIFT_LEG_TICKS * 3, target: "" });
+    await interactAndSync();
+    assert.ok(liftPhase(LIFT_PHASE.lowering, firstDeadline), "an early reset cannot skip or extend the first leg");
+    await until("the brake jams after the first leg", () => first.state.frame >= firstDeadline && liftPhase(LIFT_PHASE.jammed, 0), 14000);
+    assert.ok(roomPhase(2, "combat"));
+
+    operator.send(0, 0, "morph");
+    await until("the brake operator holds a weapon", () => operator.me.armed && operator.me.phase === "idle");
+    await interactAndSync();
+    await until("the jammed brake asks the operator to recall", () => notices.some((notice) => notice.includes("Recall your partner")));
+    assert.ok(liftPhase(LIFT_PHASE.jammed, 0));
+    await recallForReader(operator);
+    operator.room.send("interact");
+    const secondDeadline = await waitForLeg("both clients see the brake resume", LIFT_PHASE.resuming);
+    await until("the lift docks after the second leg", () => first.state.frame >= secondDeadline && liftPhase(LIFT_PHASE.docked, 0), 14000);
+    assert.ok(roomPhase(2, "combat"), "docking still requires defeating the lift guard");
+    for (const enemy of guards) Object.assign(enemy, { phase: "idle", ticks: 0 });
+    await fight(couriers, "signal", 26500);
+    await until("both clients see the lift log", () => roomPhase(3, "signal"));
+    assert.deepEqual(await Promise.all(party.map((account) => account.profile())), initial);
+
+    const reader = couriers.find((courier) => courier.me.hp > 0)!;
+    await reader.go(log.x, log.z);
+    await recallForReader(reader);
+    reader.room.send("interact");
+    reader.room.send("interact");
+    await until("both players receive the lift clear", () => roomPhase(3, "complete"));
+    const finished = await Promise.all(party.map((account) => account.profile()));
+    for (const [index, profile] of finished.entries()) {
+      assert.equal(profile.companion, initial[index].companion);
+      assert.equal(profile.battleXp, initial[index].battleXp + 48);
+      assert.equal(profile.bond, initial[index].bond + 6);
+      assert.deepEqual(profile.lore, [...initial[index].lore, "lift"]);
+      assert.deepEqual(profile.clears, [...initial[index].clears, "lift"]);
+    }
+
+    await Promise.all(rooms.map((room) => room.leave()));
+    rooms.length = 0;
+    await server.stop();
+    server = undefined;
+    server = await runServer({ port: 0, database });
+    for (const [index, account] of party.entries()) {
+      const response: Response = await fetch("http://127.0.0.1:" + server.port + "/api/profile", {
+        headers: { Authorization: "Bearer " + account.sdk.auth.token },
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { profile: finished[index] });
+    }
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server?.stop();
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

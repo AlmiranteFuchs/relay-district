@@ -8,7 +8,7 @@ import {
   DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW,
   type DispatchInvitation, type DispatchInviteRequest, type DispatchRecentCrew,
 } from "../../shared/src/dispatch.ts";
-import { nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
+import { LIFT_PHASE, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
 import { CompanionRoomPlay } from "./companion-room-play.ts";
@@ -481,11 +481,14 @@ function signalObjective(world: WorldView) {
     : "Bring your recalled companion to the Boarding Reader.";
   if (world.mission === "viaduct") {
     if (world.stage === 3) return "Recall your companion and read the Signal Ledger.";
-    const seconds = viaductSeconds(world);
+    const seconds = readerSeconds(world);
     return seconds > 0
       ? "East Relay is live for " + seconds + "s. Answer with a recalled companion."
       : "Open West Relay with your companion recalled, then answer East Relay.";
   }
+  if (world.mission === "lift") return world.stage === 3
+    ? "Recall your companion and read the Lift Log."
+    : "Recall your companion and use the Brake Wheel.";
   if (world.mission === "bayrelay") return bayRelayObjective(world);
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
@@ -513,8 +516,16 @@ function bayRelayObjective(world: WorldView) {
   return world.status === "combat" ? goal + " Each call staggers the patrol." : goal;
 }
 
-function viaductSeconds(world: WorldView) {
+function readerSeconds(world: WorldView) {
   return Math.max(0, Math.ceil((world.readerUntil - world.frame) / TICK_RATE));
+}
+
+function liftCombatObjective(world: WorldView) {
+  if (world.stage === 0) return "Clear the upper landing.";
+  if (world.readerMask === LIFT_PHASE.jammed) return "Recall your companion and reset the Brake Wheel.";
+  if (world.readerMask === LIFT_PHASE.docked) return "Lower landing reached. Defeat the remaining guard.";
+  return "Lift descending. " + readerSeconds(world) + "s to the "
+    + (world.readerMask === LIFT_PHASE.lowering ? "midpoint." : "lower landing.");
 }
 
 function stationPrompt(world: WorldView, actor: ViewActor) {
@@ -537,11 +548,14 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
     if (point.readerBit && (world.readerMask & point.readerBit)) return point.title + " • Linked";
   }
   if (world.mission === "viaduct" && world.stage === 1) {
-    const seconds = viaductSeconds(world);
+    const seconds = readerSeconds(world);
     if (point.id === "viaduct-west" && seconds > 0) return "West Relay • Sending to East Relay";
     if (point.id === "viaduct-east" && seconds === 0) return "East Relay • Waiting for West Relay";
   }
-  const recall = world.mission === "archive" || world.mission === "bayrelay" || world.status === "signal" && (world.mission === "terminal"
+  if (world.mission === "lift" && world.status !== "signal"
+    && !(world.status === "combat" && world.readerMask === LIFT_PHASE.jammed)) return "";
+  const recall = world.mission === "archive" || world.mission === "bayrelay" || world.mission === "lift"
+    || world.status === "signal" && (world.mission === "terminal"
     || world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct"
     || point.id === "register" || point.id === "signal" && world.mission === "return");
   return recall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title;
@@ -584,6 +598,7 @@ function updateHUD(actor?: ViewActor) {
           : "Watch the rear lane and clear both enemies."
         : world.mission === "viaduct" ? world.stage === 0 ? "Clear the scouts from the viaduct."
           : "Hold the viaduct while the Signal Ledger powers up."
+        : world.mission === "lift" ? liftCombatObjective(world)
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: world.mission === "departure" ? "The Switchkeeper is staggered. A Cable Runner is coming from the west."
         : world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",

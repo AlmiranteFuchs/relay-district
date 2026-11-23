@@ -47,6 +47,12 @@ const viaductMarkers: Marker[][] = [
   [],
   [{ id: "viaduct-ledger", x: 8.25, z: 2.55, title: "Signal Ledger" }],
 ];
+export const LIFT_LEG_TICKS = 8 * TICK_RATE;
+export const LIFT_PHASE = { idle: 0, lowering: 1, jammed: 2, resuming: 3, docked: 4 } as const;
+const liftBrake: Marker = { id: "lift-brake", x: -5.4, z: 1.9, title: "Brake Wheel" };
+const liftMarkers: Marker[][] = [
+  [], [liftBrake], [liftBrake], [{ id: "lift-log", x: 6.9, z: 2.7, title: "Lift Log" }],
+];
 export const BAY_RELAY_CALLS_COMPLETE = 0b11;
 export const BAY_RELAY_STAGGER_TICKS = 40;
 const bayRelayMarkers: Marker[] = [
@@ -62,6 +68,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "exchange") return exchangeMarkers[stage] ?? [];
   if (mission === "departure") return departureMarkers[stage] ?? [];
   if (mission === "viaduct") return viaductMarkers[stage] ?? [];
+  if (mission === "lift") return liftMarkers[stage] ?? [];
   if (mission === "bayrelay") return bayRelayMarkers;
   if (mission !== "chapter") return [];
   return stage === 0
