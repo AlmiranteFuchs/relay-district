@@ -1,6 +1,6 @@
 # Relay District
 
-Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Play **The Last Crossing** solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
+Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore four story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
 
 ## Run the game
 
@@ -31,6 +31,8 @@ After The Last Crossing, Dispatch opens **The Night Platform**, the next story m
 
 Clear The Night Platform to enter **Return Junction**. Use the return signal with your companion recalled to set the turnout, then defend it. Read the signal again to record the turnout log in each player's journal.
 
+After Return Junction, take **East Terminal** from Dispatch. Recall your companion to match the outbound and return fare readers, defend the terminal, then read the manifest to learn where the return line leads.
+
 The companion keeps its name, personality, bond, trinket, room theme, memories, former forms, and mastery records through a morph. Battle XP starts at zero for the new form. Its basic chain and signature skill are available immediately. Complete a mastery drill and reach rank three to use the follow-up. Earn another catalyst by clearing two distinct missions and carry one at a time.
 
 In the companion room, rename your partner, decorate its room, choose a keepsake, and play together. Inspect the closure plaque, maintenance log, and broken announcement to record the history of the Last Crossing. Open Sound to hear the original score and gameplay cues.
@@ -43,9 +45,25 @@ In co-op, recall your companion with **Q** if it is armed, stand beside a downed
 - `npm run build` type-checks the workspaces and builds the browser release into `dist/`.
 - `npm run assets` regenerates the original score and effects. The plaza cue is 24 bars at 112 BPM. The route and combat cues are aligned 24-bar stereo stems at 136 BPM.
 - `blender -b --factory-startup -t 2 --python scripts/models.py` regenerates the original GLB companions, weapons, player, and opponents. Add `-- --cast` for the courier and three enemies only. The built GLBs and WAVs are included for normal play.
+- Use the [model and animation handoff](docs/ASSETS.md) and [audio handoff](docs/AUDIO.md) to replace presentation assets. The [roadmap](docs/ROADMAP.md) records chapter, combat, companion, and multiplayer milestones.
 
 The shared TypeScript module owns combat timing and hit tests. Babylon.js renders and predicts local motion. The room server owns hits, enemy turns, party state, and rewards. Guest profile tokens are opaque, and SQLite grants each reward once per eligible run. Treat the LAN mode as a development build for trusted peers.
 
+### Preview changes with a separate save
+
+Run these commands in a separate PowerShell terminal from the repository root. They serve a separate build on port 2571 with its own SQLite save. Choose another port if 2571 is in use.
+
+```powershell
+$relayPreview = Join-Path $env:TEMP 'relay-district-preview'
+npm run build -- --outDir (Join-Path $relayPreview 'dist')
+$env:RELAY_WEB_ROOT = Join-Path $relayPreview 'dist'
+$env:RELAY_DB = Join-Path $relayPreview 'preview.sqlite'
+$env:RELAY_PORT = '2571'
+npm start
+```
+
+Open [the isolated preview](http://127.0.0.1:2571/). Saves on this port persist across preview restarts.
+
 ## Creative references
 
-The story, characters, creatures, stage art, music, sound effects, and interface are original. GhostX Ultimate informed the elevated combat camera, companion-to-weapon transformation, and era of PC graphics. Neopets informed the companion journal, keepsakes, and sense of caring for one persistent creature. [Period GhostX Ultimate gameplay and screenshots](https://buladifu.blogspot.com/2013/12/ghostx-ultimate-part-one.html) · [GhostX Ultimate companion feature](https://www.youtube.com/watch?v=JKJU5_y5-ZY) · [Neopets pet care](https://www.neopets.com/help/pethelp.phtml)
+The story, characters, creatures, stage art, music, sound effects, and interface are original. GhostX Ultimate informed the elevated combat camera and companion-to-weapon transformation. Classic Flyff informs the painted color shapes and the plaza's role as a place to gather. Neopets informed the companion journal, keepsakes, and care. [Period GhostX Ultimate gameplay and screenshots](https://buladifu.blogspot.com/2013/12/ghostx-ultimate-part-one.html) · [Flyff's 2005 update and screenshots](https://www.4gamer.net/games/015/G001558/20050823201647/) · [Neopets pet care](https://www.neopets.com/help/pethelp.phtml)

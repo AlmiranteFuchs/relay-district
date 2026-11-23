@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -117,6 +117,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "Route test, 23:58. Twelve passenger fares read on the outward track. Twelve partner signals read on the return track, including one pulse your partner can still repeat. Mara’s instruction in the margin: keep the east turnout live until both lists match.",
     hint: "Read the return signal at the junction past the night platform",
   },
+  manifest: {
+    title: "East Terminal manifest · 00:06",
+    text: "Mara released the twelve partners from the passenger list so the city could not close their return route. Each kept one half of its courier’s fare. Your partner sounds the same two pulses you heard at the sealed gate. The manifest is marked DELIVER TO TIDEGATE if a courier brings a matching token.",
+    hint: "Open the manifest with both readers at East Terminal",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -127,6 +132,10 @@ export const JOBS: Record<Mission, {
   return: {
     title: "Return Junction", description: "Trace the return route from the conductor’s register. Requires The Night Platform.",
     clearLore: "turnout", requiresChapter: true, prerequisite: "night",
+  },
+  terminal: {
+    title: "East Terminal", description: "Match both halves of the fare, drive back the patrol, and recover the manifest.",
+    clearLore: "manifest", requiresChapter: true, prerequisite: "return",
   },
   platform: { title: "Platform Sweep", description: "Clear a crowded platform and trace the Glass Heron signal.", reward: "heron", requiresChapter: true },
   transformer: { title: "Transformer Trial", description: "Break through the substation's guard and trace Cinder Boar.", reward: "boar", requiresChapter: true },
@@ -163,4 +172,10 @@ export function isFamily(value: unknown): value is Family {
 
 export function isMission(value: unknown): value is Mission {
   return typeof value === "string" && Object.hasOwn(JOBS, value);
+}
+
+export function missionLockReason(mission: Mission, clears: readonly Mission[]): string | undefined {
+  const { requiresChapter, prerequisite } = JOBS[mission];
+  if (requiresChapter && !clears.includes("chapter")) return "Clear The Last Crossing to open this job.";
+  if (prerequisite && !clears.includes(prerequisite)) return "Clear " + JOBS[prerequisite].title + " to open this job.";
 }

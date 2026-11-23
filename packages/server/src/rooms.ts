@@ -1,11 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
-  battleRank, isFamily, isMission, JOBS, LORE, PATCH_MS, TICK_RATE, type Action, type Family, type Mission, type Profile,
+  battleRank, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, TICK_RATE, type Action, type Family, type Mission, type Profile,
 } from "../../shared/src/content.ts";
 import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
-import { nearestMarker, PLAZA, routeMarkers, type Marker } from "../../shared/src/scene.ts";
+import { nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
 
@@ -240,6 +240,7 @@ const returnWaves = [
   wave(["skitter", 2.2, -2.25], ["skitter", 5.15, 2.45]),
   wave(["keeper", 0.2, -1.45], ["skitter", 4.9, 3.35]),
 ];
+const terminalPatrol = wave(["skitter", -2.8, -1.1], ["guard", 4.4, 0.1], ["skitter", 7.1, 2.7]);
 
 export class MissionRoom extends GameRoom {
   maxClients = 4;
@@ -270,13 +271,8 @@ export class MissionRoom extends GameRoom {
 
   override onJoin(client: Client, options: unknown, auth: Session) {
     if (this.state.status !== "lobby") throw new ServerError(409, "This mission already started.");
-    if (JOBS[this.mission].requiresChapter && !auth.profile.clears.includes("chapter")) {
-      throw new ServerError(403, "Clear The Last Crossing to open this job.");
-    }
-    const prerequisite = JOBS[this.mission].prerequisite;
-    if (prerequisite && !auth.profile.clears.includes(prerequisite)) {
-      throw new ServerError(403, "Clear " + JOBS[prerequisite].title + " to open this job.");
-    }
+    const locked = missionLockReason(this.mission, auth.profile.clears);
+    if (locked) throw new ServerError(403, locked);
     if (this.previewFamily && !auth.profile.discovered.includes(this.previewFamily)) throw new ServerError(403, "This form has not been discovered.");
     super.onJoin(client, options, auth);
     if (!this.state.leader) this.state.leader = client.sessionId;
@@ -308,6 +304,7 @@ export class MissionRoom extends GameRoom {
     this.runId = randomUUID();
     this.state.stage = 0;
     this.state.wave = 0;
+    this.state.readerMask = 0;
     this.state.status = "approach";
     this.waveReady = 0;
     this.clearEnemies();
@@ -326,6 +323,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "return") {
       this.spawn(returnWaves[0]);
       this.story(JOBS.return.title, "The register points to a turnout at the east junction. Clear the track, then let your partner answer the return signal.");
+    } else if (this.mission === "terminal") {
+      this.state.status = "signal";
+      this.story(JOBS.terminal.title, "The terminal split each fare between two readers. Bring your partner to both with its weapon recalled. A party can split up and use one reader each.");
     } else if (this.mission === "training") {
       this.spawn(wave(["dummy", 0, 0]));
       const target = [...this.enemies.values()][0];
@@ -386,6 +386,11 @@ export class MissionRoom extends GameRoom {
       } else {
         this.story("A live line", "The guards are down. The signal is green for the first time since the evacuation. Bring your recalled partner to the box again to read the log.");
       }
+      return;
+    }
+    if (this.mission === "terminal") {
+      this.state.status = "signal";
+      this.story("Terminal clear", "The manifest drawer is open. Take your recalled partner to the east end and read the manifest together.");
       return;
     }
     if (this.mission !== "chapter") { this.finish(); return; }
@@ -458,20 +463,47 @@ export class MissionRoom extends GameRoom {
       });
       this.spawn(chapterWaves[2]);
       this.story("The Switchkeeper", "Its hands still close around the route controls. Step out of its wind-up, then answer during recovery.");
+    } else if (this.mission === "terminal" && this.state.status === "signal") {
+      this.interactTerminal(entry, point);
     } else if ((point.id === "signal" || point.id === "register") && this.state.status === "signal") {
       this.interactSignal(entry, point);
     } else client.send("notice", "The passage opens when the lane is safe.");
   }
 
-  private interactSignal(entry: Entry, point: Marker) {
-    if (this.mission !== "chapter") {
-      const player = entry.player;
-      if (player.armed || player.move?.kind === "arm" || player.move?.kind === "recall") {
-        entry.client.send("notice", "Recall your partner with Q and let it answer the reader.");
-        return;
-      }
-      this.broadcast("combat", { type: "observe", source: player.id, x: point.x, z: point.z });
+  private hearSignal(entry: Entry, point: Marker) {
+    const player = entry.player;
+    if (player.armed || player.move?.kind === "arm" || player.move?.kind === "recall") {
+      entry.client.send("notice", "Recall your partner with Q and let it answer the reader.");
+      return false;
     }
+    this.broadcast("combat", { type: "observe", source: player.id, x: point.x, z: point.z });
+    return true;
+  }
+
+  private interactTerminal(entry: Entry, point: Marker) {
+    const { readerBit } = point;
+    if (!readerBit) {
+      if (this.state.readerMask !== TERMINAL_READERS_COMPLETE) {
+        entry.client.send("notice", "The drawer needs both halves of the fare. Use the outbound and return readers.");
+      } else if (this.hearSignal(entry, point)) this.finish();
+      return;
+    }
+    if (this.state.readerMask & readerBit) {
+      entry.client.send("notice", "This reader already has its half of the fare.");
+      return;
+    }
+    if (!this.hearSignal(entry, point)) return;
+    this.state.readerMask |= readerBit;
+    if (this.state.readerMask === TERMINAL_READERS_COMPLETE) {
+      this.spawn(terminalPatrol);
+      this.story("Fare matched", "The drawer unlocks with a bell. A terminal patrol answers from both ends of the lane. Arm your partner and clear the patrol before reading the manifest.");
+    } else {
+      this.story(point.title, "Your partner's pulse registers one half of the fare. Bring a recalled partner to the other reader.");
+    }
+  }
+
+  private interactSignal(entry: Entry, point: Marker) {
+    if (this.mission !== "chapter" && !this.hearSignal(entry, point)) return;
     if (this.mission === "return" && this.state.wave === 0) {
       this.state.wave = 1;
       this.spawn(returnWaves[1]);

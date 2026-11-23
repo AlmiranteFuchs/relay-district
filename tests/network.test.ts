@@ -8,6 +8,7 @@ import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
 import type { Action, Family, Mission, Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
+import { routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -343,6 +344,127 @@ test("return junction requires the night platform, preserves health between wave
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();
+  }
+});
+
+test("East Terminal readers synchronize after reconnect and award a shared manifest", { timeout: 65000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      server.store.reward([id], "night-unlock", "night");
+      if (account !== guest) server.store.reward([id], "junction-unlock", "return");
+    }
+    await assert.rejects(guest.sdk.create("mission", { mission: "terminal" }), /Clear Return Junction/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "terminal" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear Return Junction/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const [outbound, returning, manifest] = routeMarkers("terminal", 0);
+    const notices: string[] = [];
+    other.onMessage("notice", (notice: string) => { notices.push(notice); });
+    const observations: string[][] = rooms.map((room) => {
+      const sources: string[] = [];
+      room.onMessage("combat", (event: CombatEvent) => { if (event.type === "observe") sources.push(event.source); });
+      return sources;
+    });
+    first.send("begin");
+    await until("both couriers enter East Terminal", () => first.state.status === "signal" && other.state.status === "signal");
+    await Promise.all([a.go(outbound.x, outbound.z), b.go(manifest.x, manifest.z)]);
+    other.send("interact");
+    await until("manifest asks for both fare halves", () => notices.some((notice) => notice.includes("both halves")));
+    assert.equal(first.state.readerMask, 0);
+
+    await b.go(returning.x, returning.z);
+    b.send(0, 0, "morph");
+    await until("return reader operator arms", () => b.me.armed);
+    other.send("interact");
+    await until("return reader needs the partner recalled", () => notices.some((notice) => notice.includes("Recall your partner")));
+    assert.equal(first.state.readerMask, 0);
+    b.send(0, 0, "morph");
+    await until("partner is recalled at the return reader", () => !b.me.armed && b.me.phase === "idle");
+    other.send("interact");
+    await until("both couriers see the return half", () => first.state.readerMask === returning.readerBit && other.state.readerMask === returning.readerBit);
+    other.send("interact");
+    await until("repeat use of the same reader is rejected", () => notices.some((notice) => notice.includes("already has its half")));
+    assert.equal(first.state.status, "signal");
+
+    const reconnecting = new Promise<void>((resolve) => other.onReconnect.once(resolve));
+    other.connection.close(4010, "test drop");
+    await Promise.race([reconnecting, delay(4200).then(() => { throw new Error("Reconnect did not settle"); })]);
+    await until("reconnected courier still sees the latched reader", () => other.state.readerMask === returning.readerBit && b.me.connected);
+    first.send("interact");
+    await until("both fare halves activate the patrol", () => first.state.status === "combat" && other.state.status === "combat");
+    assert.equal(first.state.readerMask, TERMINAL_READERS_COMPLETE);
+    assert.equal(other.state.readerMask, TERMINAL_READERS_COMPLETE);
+    for (const account of [alpha, beta]) assert.equal((await account.profile()).lore.includes("manifest"), false);
+
+    await fight([a, b], "signal", 30000);
+    const reader = a.me.hp > 0 ? a : b;
+    await reader.go(manifest.x, manifest.z);
+    await until("manifest reader stands idle", () => reader.me.phase === "idle");
+    if (reader.me.armed) reader.send(0, 0, "morph");
+    await until("manifest reader recalls their partner", () => !reader.me.armed && reader.me.phase === "idle");
+    reader.room.send("interact");
+    reader.room.send("interact");
+    await until("both couriers see the chapter clear", () => first.state.status === "complete" && other.state.status === "complete");
+    for (const sources of observations) assert.deepEqual(sources, [other.sessionId, first.sessionId, reader.room.sessionId]);
+    for (const account of [alpha, beta]) {
+      const profile = await account.profile();
+      assert.deepEqual(profile.clears, ["chapter", "night", "return", "terminal"]);
+      assert.deepEqual(profile.lore, ["register", "turnout", "manifest"]);
+      assert.equal(profile.companion, "Neri");
+      assert.equal(profile.battleXp, 208);
+      assert.equal(profile.bond, 22);
+    }
+    first.send("begin");
+    await until("replay resets both readers", () => first.state.status === "signal" && first.state.readerMask === 0);
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("a solo courier can use both East Terminal readers and clear the patrol", { timeout: 55000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  let room: Socket | undefined;
+  try {
+    const account = await player("http://127.0.0.1:" + server.port, "Solo");
+    const { id } = server.store.session(account.sdk.auth.token)!;
+    for (const mission of ["chapter", "night", "return"] as const) server.store.reward([id], mission, mission);
+    const terminal = room = connectHandlers(await account.sdk.create("mission", { mission: "terminal" }) as Socket);
+    await local(terminal);
+    const solo = new TestCourier(terminal);
+    const [outbound, returning, manifest] = routeMarkers("terminal", 0);
+    terminal.send("begin");
+    await until("solo courier enters East Terminal", () => terminal.state.status === "signal");
+    await solo.go(outbound.x, outbound.z);
+    terminal.send("interact");
+    await until("the outbound half is accepted first", () => terminal.state.readerMask === outbound.readerBit);
+    await solo.go(returning.x, returning.z);
+    terminal.send("interact");
+    await until("the solo courier starts the patrol", () => terminal.state.status === "combat");
+    await fight([solo], "signal", 30000);
+    await solo.go(manifest.x, manifest.z);
+    await until("manifest operator stands idle", () => solo.me.phase === "idle");
+    if (solo.me.armed) solo.send(0, 0, "morph");
+    await until("operator recalls their partner", () => !solo.me.armed && solo.me.phase === "idle");
+    terminal.send("interact");
+    await until("the solo courier clears East Terminal", () => terminal.state.status === "complete");
+    assert.ok((await account.profile()).lore.includes("manifest"));
+  } finally {
+    try { await room?.leave(); }
+    finally { await server.stop(); }
   }
 });
 

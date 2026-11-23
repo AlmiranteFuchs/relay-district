@@ -2,6 +2,7 @@ import { Matrix, Quaternion, TransformNode, Vector3 } from "@babylonjs/core";
 import { ARM_TICKS } from "../../shared/src/combat.ts";
 import { FORMS, PATCH_MS, TICK_RATE, type Strike } from "../../shared/src/content.ts";
 import type { ViewActor } from "./view.ts";
+import type { ActorModel } from "./model-assets.ts";
 
 interface Rig {
   node: TransformNode;
@@ -136,7 +137,7 @@ class GripArm {
 }
 
 export class MothAnimation {
-  private readonly courier: Rig;
+  private readonly courier: ActorModel;
   private readonly creature: Rig;
   private readonly staff: Rig;
   private phase = "";
@@ -153,7 +154,7 @@ export class MothAnimation {
   private readonly organScale?: Vector3;
   private readonly arms: { arm: GripArm; grip: Vector3 }[];
 
-  constructor(courier: Rig, creature: Rig, staff: Rig) {
+  constructor(courier: ActorModel, creature: Rig, staff: Rig) {
     this.courier = courier;
     this.creature = creature;
     this.staff = staff;
@@ -196,8 +197,10 @@ export class MothAnimation {
     const gripWeight = arming ? between(progress, .02, .38) : recalling ? 1 - between(progress, .48, .88) : Number(actor.armed);
     const expression = Math.max(gripWeight, arming ? handoff * .5 : 0);
     // Keep the actor origin on its interpolated world position and load the legs under it.
-    body.rotation.z = phase === "down" ? -.97 : phase === "hurt" ? -.14 : phase === "dodge" ? .33 : -pose.weight * .14 * expression;
-    body.position.y += Math.abs(wind) * .045 - pose.brace * .12 * expression;
+    if (!this.courier.animation) {
+      body.rotation.z = phase === "down" ? -.97 : phase === "hurt" ? -.14 : phase === "dodge" ? .33 : -pose.weight * .14 * expression;
+      body.position.y += Math.abs(wind) * .045 - pose.brace * .12 * expression;
+    }
     const set = (part: string, x: number, y: number, z: number) => this.courier.parts.get(part)?.rotation.set(x, y, z);
     set("torso", wind * .06, pose.turn * expression, -pose.weight * .16 * expression);
     set("head", reaction * .1, -pose.turn * .72 * expression, arming ? -.24 * handoff : .02 - pose.brace * .16 * expression);
@@ -209,8 +212,10 @@ export class MothAnimation {
     set("knee_far", 0, 0, -.1 + Math.min(0, wind) * .43 - .37 * stance);
 
     const weapon = this.staff.node;
-    weapon.position.set(pose.forward, pose.height, pose.depth);
-    weapon.rotation.set(0, pose.sweep, pose.pitch);
+    if (!this.courier.weaponSocket) {
+      weapon.position.set(pose.forward, pose.height, pose.depth);
+      weapon.rotation.set(0, pose.sweep, pose.pitch);
+    }
     weapon.scaling.setAll(Math.max(.025, staffSize));
     weapon.setEnabled(staffSize > .035 && actor.hp > 0);
     const staffFrame = weapon.computeWorldMatrix(true);

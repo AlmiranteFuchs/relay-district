@@ -1,0 +1,69 @@
+# Relay District roadmap
+
+Relay District is an original browser beat ’em up with a persistent town, short co-op chapters, and one living biotech companion per courier. A session should take a player from the repair plaza into a fight with a specific purpose, then bring them home with a change they can see or use. The companion is the thread through those sessions. Its name, bond, home, memories, and mastery records persist. Arming is temporary. A catalyst-gated morph changes its fighting style and resets its battle XP.
+
+## Current development baseline
+
+The project has a shared plaza for up to 16 LAN players, four-player instance rooms, SQLite saves, four companion forms and mastery drills, and a timed in-combat rescue. The Last Crossing, The Night Platform, Return Junction, and East Terminal form the first story sequence. Challenge routes unlock forms alongside the story. Use the [README](../README.md) to check the routes and commands in the current build.
+
+| Milestone | Verified progress | Open acceptance |
+| --- | --- | --- |
+| Asset replacement | Imported a skinned Blender GLB, sampled its clips on independent courier rigs, attached the weapon, and tested score fallback and synchronized stems. The bundled art remains the default. | Try a player-authored courier in a full fight and approve its period look at both aspect ratios. |
+| East Terminal | Verified real solo, two-player, and four-client clears. The four-client run used 100 ms simulated round-trip latency on one machine. Isolated Chrome verified Dispatch, reader navigation, objective text, and the journal. SQLite coverage verifies restart and duplicate rewards. | Run a fresh-player chapter walkthrough and the physical two-device LAN check. |
+
+## Design references
+
+| Reference | What the source shows | What to try in Relay District |
+| --- | --- | --- |
+| GhostX and GhostX Ultimate | JCE’s development lead described optional evolution as a change of fighting style, with basic strikes and skills chaining into launchers, links, and finishers. The 2009 GameKiss guide documents party invitations, crews, and the town. GameKiss’s 2011 Ultimate announcement emphasizes companion personalities and combos. A 2013 player account distinguishes story missions, dungeons, and open areas. [JCE interview](https://www.gamemeca.com/view.php?gid=71276), [GameKiss beginner guide](https://img.gamekiss.com/dg/gsp/images/gxu/guide/pdf/GameKiss_GhostX_BeginnersGuide_ver1.00.pdf), [2011 GameKiss announcement as reprinted](https://mmohuts.com/news/ghostx-now-in-open-beta), [2013 player account](https://buladifu.blogspot.com/2013/12/ghostx-ultimate-part-one.html) | Keep fighting styles distinct through reach, commitment, and follow-ups. Give discoveries a visible companion reaction. Use a dedicated contract for repeatable play so the story can move forward once. |
+| Flyff | Excite’s 2005 update announcement shows distinct job roles, dungeon quests, and illustrated character designs. The later Flyff Universe patch notes explicitly count debuffs as contribution and describe party rewards and private shops. [2005 Excite announcement and images](https://www.4gamer.net/games/015/G001558/20050823201647/), [Flyff Universe developer patch notes](https://universe.flyff.com/news/patchnotes103) | Give players a familiar place to meet and practical reasons to return. Make support actions matter in a group. Use bright, discrete clothing shapes, painted surface color, and legible landmarks as presentation references. |
+| Neopets and MMO social research | Neopets documents applied wearables. Steinkuehler and Williams examine how MMO common spaces can support informal social contact among regular visitors. [Neopets customization](https://classic.support.neopets.com/hc/en-us/articles/17736170937613-How-do-I-customise-my-pet), [MMOs as third places](https://onlinelibrary.wiley.com/doi/10.1111/j.1083-6101.2006.00300.x) | Let players bring a memento home and see it on their partner or in its room. Put recurring conveniences around the same plaza so two players have time to recognize one another and form a party. |
+| Streets of Rage 4 and Left 4 Dead | Jordi Asensio describes using different enemy roles to compose waves and introducing progression while preserving the pace of a brawler. Michael Booth describes alternating intense encounters with periods of relief. [Asensio on encounter composition](https://blog.playstation.com/?p=350657), [Booth on pacing](https://cdn.fastly.steamstatic.com/apps/valve/2009/ai_systems_of_l4d_mike_booth.pdf#page=78) | Introduce a counter against one enemy, mix that enemy with a second role, then give the party a breather before the finale. Adjust enemy composition and simultaneous pressure for party size. |
+
+The chapter, companion, equipment, and social designs below are Relay District proposals. The in-game names, models, maps, effects, and music are original.
+
+## Milestones
+
+### 1. Make assets replaceable and verify one fight
+
+- Make a custom rigged GLB usable without changing combat or the existing interface. Keep camera-facing, scale, origin, attachment points, and clip naming documented in the [asset handoff](ASSETS.md).
+- Prove the workflow with one original courier replacement and one move. Export it from Blender, validate the file, and preview idle, run, arming, and strike at the actual play camera. A fresh checkout can reproduce the swap using the documented steps. [Khronos glTF Validator](https://github.khronos.org/glTF-Validator/), [Babylon animation groups](https://doc.babylonjs.com/features/featuresDeepDive/animation/groupAnimations)
+- For the art approval pass, capture 1280 × 720 and 4:3 frames in both facings. Start by comparing fighter height around 18–22% of the frame. Judge long tapered proportions, distinct hair and coat shapes, painted low-resolution diffuse, and whether the weapon and the companion’s living biotech features read at that size. Use those captures to get direction on authored art before extending the cast.
+- Check that a warning is identifiable with audio muted and that music leaves the warning audible with effects enabled. Give the plaza and each route a musical identity derived from original themes and arrangements.
+
+### 2. Open East Terminal
+
+- Complete East Terminal after Return Junction. The recalled companion reads two positions, the party defends the route, and a recovered manifest persists as a journal memory. Use the closing interaction to tell the party who was erased from the records and give them a reason to travel onward.
+- Use a recognizable landmark at each decision. Teach the chapter’s objective in a low-pressure moment, put it under combat pressure, and leave a quiet final beat to read the memory. Solos and groups complete the same objective. Put route-specific explanations in world cues and the existing interface surfaces. [GDC level designers on landmarks and guidance](https://www.gamedeveloper.com/design/gdc-2018-level-design-workshop-an-expert-roundtable-q-a)
+- Run the new chapter solo and with four clients. Verify eligibility, disconnect/rejoin, retry conditions, journal persistence after restart, and first-clear grants once per eligible player. Record the two-device latency check separately from SDK tests. A first-time player should reach the terminal objective without developer instructions and be able to say why the companion responds to the records.
+
+### 3. Give co-op and replay their own progression
+
+- Put one visible optional contract in the existing Dispatch. Change enemy pairings or an encounter constraint on an authored route. Begin with a single alternate formation and a clear time or no-down commendation. Award an original keepsake or cosmetic rather than making a story route depend on farming contracts.
+- Make launch and follow-up, guard break and punish, or a well-timed rescue noticeable actions in co-op. Keep contribution room-authoritative and count support actions where they change the result. A mixed-experience group should leave the first run able to name one thing a partner did that helped them.
+- Use one continuing non-consumable goal per reward track. Battle XP earns a usable form technique, a chapter adds a memory, and contracts earn a visible memento. Exercise existing saves through any migration and check that morphing resets the intended battle XP while preserving the companion’s permanent progression.
+- Test all four weapon styles against the same enemy roles. One solo player per form can complete every mandatory objective. Review time to clear, avoidable damage, and knockdowns for 1, 2, and 4 players before using those results to tune enemies.
+
+### 4. Make the plaza worth returning to
+
+- Give the companion a room object it reacts to and a new behavior on a story return. Selecting a keepsake should create a visible change after reload. Give players a reason to take their companion home even on a session with no chapter clear.
+- Start with a location-based party invitation or notice at Dispatch. Two players who meet in the plaza should be able to form a party, enter an instance, and return together without needing an external room-code exchange. Use existing menu and HUD styling.
+- Add a repeatable low-pressure plaza activity while a group assembles. Watch a four-player session from first arrival to group return and record whether players actually use the gathering point and the companion room or pass through immediately.
+
+### 5. Decide whether to run a hosted pilot
+
+- Prepare an explicit pilot gate covering guest account recovery, player blocking/reporting for social features, backup and restore, browser compatibility, crash logs, and a documented rollback. Exercise recovery on an isolated copy of the saved data.
+- Record a full 16-player plaza and four simultaneous four-player instances in a timed soak before increasing the population target. Track tick processing time, reconnect success, error rate, and reward duplicates. Build any multi-process architecture from observed capacity and measured bottlenecks. Existing LAN rooms use the browser and server architecture already in the repository. [Colyseus multi-process room guidance](https://docs.colyseus.io/scalability)
+- A hosted pilot requires a release decision, actual remote-browser playtests, and measured concurrency on the intended infrastructure. A public source repository is the current distribution channel for verified builds.
+
+## Proposed story after East Terminal
+
+| Route | Discovery | Encounter and return |
+| --- | --- | --- |
+| Tidegate Signal Archive | Bring the manifest to a surviving record keeper. Match a companion pulse to the crew list and establish why the westbound record was sealed. | Move through a warning sequence that changes safe lanes, then defend a short read. Return with a recovered recording audible in the home. |
+| Dead Line Exchange | Reach the abandoned transfer line. Recovered crew messages reveal who kept the return route open. | Introduce an enemy that threatens the back line, then mix it with a guard. The party can cover the rear approach or interrupt the guard to make space. Finish with a plaza conversation that opens a new contract. |
+| First Departure | Witness the first verified return and resolve the erased manifest. Give the companion a recognizable home reaction after the trip. | Bring back the first arc’s encounter skills in a finale with a legible recovery between phases. Award an arc keepsake and open a separate replay version of the route. |
+
+## How to mark progress
+
+Use one playable outcome per change. Record the prior behavior, acceptance cases, the tested commit, and the browser or server checks that actually ran. Treat automated simulation and SDK tests, local graphical play, and outside playtest feedback as distinct evidence. Require a clean test/build, a local smoke test on an isolated save and port for player-facing changes, and a fresh-profile run when chapter order or rewards change. A chapter is ready when a new player can find it, complete it alone or with friends, and return to the plaza with a persistent consequence and an understandable next choice. Keep revisiting released routes as playtest feedback arrives.

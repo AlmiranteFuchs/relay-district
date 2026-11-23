@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
@@ -21,9 +22,15 @@ function allowsOrigin(origin: string, host: string | undefined) {
   } catch { return false; }
 }
 
-export async function runServer(config: { host?: string; port?: number; database?: string; latency?: number } = {}) {
+export async function runServer(config: {
+  host?: string; port?: number; database?: string; latency?: number; webRoot?: string;
+} = {}) {
   const host = config.host ?? "127.0.0.1";
   const port = config.port ?? 2567;
+  const webRoot = config.webRoot ? resolve(config.webRoot) : productionAssets;
+  if (config.webRoot && !statSync(resolve(webRoot, "index.html"), { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`The Relay web build at ${webRoot} is missing index.html.`);
+  }
   const store = new Store(config.database ?? ".relay/relay.sqlite");
   configureRooms(store);
   const transport = new WebSocketTransport({ maxPayload: 16384 });
@@ -69,7 +76,7 @@ export async function runServer(config: { host?: string; port?: number; database
         if (!id) { res.status(404).json({ error: "That room code is no longer active." }); return; }
         res.json({ id });
       });
-      if (existsSync(productionAssets)) app.use(express.static(productionAssets));
+      if (existsSync(webRoot)) app.use(express.static(webRoot));
     },
   });
   game.define("plaza", PlazaRoom);

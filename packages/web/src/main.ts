@@ -1,8 +1,8 @@
 import { Client, type Room } from "@colyseus/sdk";
 import { ARM_TICKS, canRescueIn, DT, rescueDistance, RESCUE_RANGE, RESCUE_TICKS, stepWalk, type CombatEvent, type Input } from "../../shared/src/combat.ts";
-import { battleRank, FORMS, isFamily, JOBS, LORE, ROOM_THEMES, TRINKETS, type Action, type Family,
+import { battleRank, FORMS, isFamily, JOBS, LORE, missionLockReason, ROOM_THEMES, TRINKETS, type Action, type Family,
   type Mission, type Profile } from "../../shared/src/content.ts";
-import { nearestMarker, PLAZA, routeMarkers } from "../../shared/src/scene.ts";
+import { nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
 import "./style.css";
@@ -116,7 +116,7 @@ function capture(state: Wire) {
   });
   return {
     kind: state.kind, mission: state.mission, status: state.status, code: state.code, leader: state.leader,
-    stage: state.stage, wave: state.wave, frame: state.frame, practice: state.practice, actors,
+    stage: state.stage, wave: state.wave, readerMask: state.readerMask, frame: state.frame, practice: state.practice, actors,
   };
 }
 
@@ -239,9 +239,9 @@ function drawPanel() {
   if (panel === "dispatch") {
     title = "District dispatch";
     body = '<div class="panel-grid">' + (Object.keys(JOBS) as Mission[]).map((job) => {
-      const locked = JOBS[job].requiresChapter && !profile.clears.includes("chapter");
-      return item(JOBS[job].title, locked ? "Clear The Last Crossing to open this job." : escape(JOBS[job].description),
-        button(job === "training" ? "Train" : "Create room", "create-" + job, locked));
+      const locked = missionLockReason(job, profile.clears);
+      return item(JOBS[job].title, escape(locked ?? JOBS[job].description),
+        button(job === "training" ? "Train" : "Create room", "create-" + job, !!locked));
     }).join("") + '</div><form id="join" class="join-code"><label>Room code <input name="code" maxlength="6" autocomplete="off" size="8" required></label><button class="button">Join</button></form>';
   } else if (panel === "lobby") {
     title = world?.mission && JOBS[world.mission as Mission]?.title || "Mission room";
@@ -300,6 +300,17 @@ function options(values: string[], selected: string) {
   return values.map((value) => "<option" + (value === selected ? " selected" : "") + ">" + escape(value) + "</option>").join("");
 }
 
+function signalObjective(world: WorldView) {
+  if (world.mission === "night") return "Bring your recalled companion to the return register.";
+  if (world.mission === "return") return "Bring your recalled companion to the return signal.";
+  if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
+  if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
+  if (!world.readerMask) return "Bring your recalled companion to both fare readers.";
+  const missing = routeMarkers("terminal", world.stage)
+    .find(({ readerBit }) => readerBit && !(world.readerMask & readerBit));
+  return missing ? "Bring a recalled companion to the " + missing.title + "." : "Check both fare readers.";
+}
+
 function updateHUD(actor?: ViewActor) {
   if (!world || !actor) return;
   const form = FORMS[actor.family];
@@ -330,15 +341,21 @@ function updateHUD(actor?: ViewActor) {
       combat: world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: "Another group is approaching.",
       route: "Use the blue door marker to enter the relay room.",
-      signal: world.mission === "night" ? "Bring your recalled companion to the return register." : "Inspect the incoming signal at the end of the lane.",
+      signal: signalObjective(world),
       complete: "Job complete. Use Mission to return to the plaza.",
       failed: "Party down. Retry from the Mission panel.",
     })[world.status] ?? "";
   text("objective-line", target);
-  const point = nearestMarker(markers(), actor.x, actor.z);
-  const stationPrompt = point?.id === "register" && world.status === "signal" && actor.armed
-    ? "Q  •  Recall " + actor.companion + " to read the register"
-    : point && actor.hp ? "E  •  " + point.title : "";
+  const nearby = nearestMarker(markers(), actor.x, actor.z);
+  const terminalReady = world.status === "signal" && (nearby?.readerBit
+    ? !(world.readerMask & nearby.readerBit) : world.readerMask === TERMINAL_READERS_COMPLETE);
+  const point = world.mission !== "terminal" || terminalReady ? nearby : undefined;
+  const needsRecall = world.status === "signal" && (point?.id === "register" || point?.id === "signal" && world.mission === "return"
+    || point?.id === "manifest" && world.readerMask === TERMINAL_READERS_COMPLETE
+    || point?.readerBit && !(world.readerMask & point.readerBit));
+  const stationPrompt = point && actor.hp
+    ? needsRecall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title
+    : "";
   const prompt = rescuePrompt(actor) || stationPrompt;
   text("prompt", prompt);
   show("prompt", !!prompt);

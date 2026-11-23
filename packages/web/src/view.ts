@@ -1,12 +1,13 @@
 import {
-  AssetContainer, Color3, Color4, DirectionalLight, DynamicTexture, Engine, FreeCamera, HemisphericLight,
-  LoadAssetContainerAsync, Matrix, Mesh, MeshBuilder, Scene, StandardMaterial, TransformNode, Vector3,
+  Color3, Color4, DirectionalLight, DynamicTexture, Engine, FreeCamera, HemisphericLight,
+  Matrix, Mesh, MeshBuilder, Scene, StandardMaterial, TransformNode, Vector3,
 } from "@babylonjs/core";
-import "@babylonjs/loaders/glTF/index.js";
 import { FORMS, type Family } from "../../shared/src/content.ts";
 import { ENEMY_WINDUP_TICKS, type CombatEvent } from "../../shared/src/combat.ts";
-import type { Marker } from "../../shared/src/scene.ts";
+import { TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
 import { MothAnimation } from "./moth-animation.ts";
+import { instantiateActorModel, loadModelAsset, type ActorModel, type ModelAsset } from "./model-assets.ts";
+import { MODEL_SLOTS, type ModelSlot } from "./model-replacements.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -16,17 +17,13 @@ export interface ViewActor {
 }
 export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
-  frame: number; practice: boolean; actors: Map<string, ViewActor>;
+  frame: number; practice: boolean; readerMask: number; actors: Map<string, ViewActor>;
 }
 
-interface Model {
-  node: TransformNode;
-  parts: Map<string, TransformNode>;
-}
 interface Visual {
-  model: Model;
-  creature?: Model;
-  weapon?: Model;
+  model: ActorModel;
+  creature?: ActorModel;
+  weapon?: ActorModel;
   mothAnimation?: MothAnimation;
   at: Vector3;
   shadow: Mesh;
@@ -53,7 +50,7 @@ export class GameView {
   engine: Engine;
   scene: Scene;
   private camera: FreeCamera;
-  private models = new Map<string, AssetContainer>();
+  private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
   private place = "";
@@ -92,10 +89,8 @@ export class GameView {
   }
 
   async load() {
-    const names = ["courier", "moth", "brick", "heron", "boar", "moth-weapon", "brick-weapon",
-      "heron-weapon", "boar-weapon", "skitter", "guard", "keeper"];
-    await Promise.all(names.map(async (name) => {
-      this.models.set(name, await LoadAssetContainerAsync("/models/" + name + ".glb", this.scene));
+    await Promise.all(MODEL_SLOTS.map(async (slot) => {
+      this.models.set(slot, await loadModelAsset(this.scene, slot));
     }));
   }
 
@@ -270,7 +265,8 @@ export class GameView {
     const plaza = world.kind === "plaza";
     const night = world.mission === "night";
     const junction = world.mission === "return";
-    const relay = junction || world.stage === 1 || world.mission === "transformer";
+    const terminal = world.mission === "terminal";
+    const relay = junction || terminal || world.stage === 1 || world.mission === "transformer";
     const panel = this.stationWall();
     const inset = this.material("inset", "#46586b");
     const beam = this.material("painted blue", "#4b647d");
@@ -327,7 +323,10 @@ export class GameView {
     }
     if (night) this.nightPlatform(root);
     else if (junction) this.returnJunction(root);
-    else {
+    else if (terminal) {
+      this.sign("EAST TERMINAL", "OUTBOUND AND RETURN READERS", -7.95, 3.02, 4.97, root);
+      this.sign("TERMINAL CONTROL", "MANIFEST ACCESS / LINE 07", 7.92, 1.62, 5.06, root, true);
+    } else {
       this.sign(plaza ? "REPAIR PLAZA" : relay ? "LINE 07" : "SERVICE ENTRY",
         plaza ? "BOND REGISTRY / DISTRICT DISPATCH" : relay ? "SIGNAL AUTHORITY / PLATFORM SEALED" : "AUTHORIZED COURIERS / AUTUMN 2007",
         -7.95, 3.02, 4.97, root, relay);
@@ -346,48 +345,40 @@ export class GameView {
       const label = makeLabel(this.layer, "point");
       label.textContent = marker.title;
       this.labels.set(marker.id, label);
+      const terminalStatus = terminal ? this.material(marker.id + " station status", "#b67e4a") : undefined;
       const gate = marker.id === "advance" || marker.id === "signal";
       const base = gate ? [1.18, 2.17, .30] as const : marker.id === "plaque" ? [.53, .9, .42] as const
-        : marker.id === "room" ? [.98, .57, .68] as const : [1.36, .81, .62] as const;
-      this.mesh(marker.id + " pedestal", [...base], [marker.x, base[1] / 2, marker.z], gate ? inset : counter, root);
+        : marker.id === "room" ? [.98, .57, .68] as const : terminal ? [1.34, .08, .78] as const : [1.36, .81, .62] as const;
+      this.mesh(marker.id + " pedestal", [...base], [marker.x, base[1] / 2, marker.z], gate || terminal ? inset : counter, root);
       if (marker.id === "room") {
         const lounge = MeshBuilder.CreateSphere("Companion cushion", { diameter: 1.1, segments: 8 }, this.scene);
         lounge.scaling.set(1.02, .3, .73); lounge.position.set(marker.x, .59, marker.z);
         lounge.material = cyan; lounge.parent = root;
       } else {
-        const display = marker.id === "plaque" || marker.id === "register" ? amber : cyan;
-        this.mesh(marker.id + " glass", gate ? [1.06, .18, .33] : [base[0] * .78, .065, .51],
+        const display = terminalStatus ?? (marker.id === "plaque" || marker.id === "register" ? amber : cyan);
+        this.mesh(marker.id + " glass", gate ? [1.06, .18, .33] : [base[0] * .78, .065, terminal ? .12 : .51],
           [marker.x, gate ? 1.65 : base[1] + .02, marker.z], display, root);
+        if (terminal) {
+          for (const side of [-1, 1]) {
+            this.mesh(marker.id + " edge", [1.15, .024, .057], [marker.x, .082, marker.z + side * .32], chrome, root);
+          }
+        }
       }
       const ring = MeshBuilder.CreateTorus("Interaction locator", { diameter: 1.65, thickness: .035, tessellation: 24 }, this.scene);
-      ring.parent = root; ring.material = cyan; ring.position.set(marker.x, .031, marker.z);
+      ring.parent = root; ring.material = terminalStatus ?? cyan; ring.position.set(marker.x, .031, marker.z);
     }
     const boundary = this.material("Lane edge", "#b3a687");
     this.mesh("Approach stripe", [25, .014, .07], [0, .011, -5.3], boundary, root);
     this.mesh("Safety stripe", [25, .012, .04], [0, .012, -5.52], boundary, root);
   }
 
-  private instantiate(name: string): Model {
-    const parent = new TransformNode(name + " instance", this.scene);
-    const orientation = new TransformNode("Forward axis", this.scene);
-    orientation.parent = parent;
-    orientation.rotation.y = Math.PI;
-    const instances = this.models.get(name)!.instantiateModelsToScene((label) => label, false, { doNotInstantiate: true });
-    for (const node of instances.rootNodes) node.parent = orientation;
-    const parts = new Map(parent.getChildTransformNodes(false).map((node) => [node.name, node]));
-    for (const [part, node] of parts) {
-      const authoredJoint = /^(torso|head|organism|(arm|elbow|leg|knee|plate)_(near|far))$/.test(part);
-      if (authoredJoint && node.rotationQuaternion) {
-        node.rotation.copyFrom(node.rotationQuaternion.toEulerAngles());
-        node.rotationQuaternion = null;
-      }
-    }
-    return { node: parent, parts };
+  private instantiate(slot: ModelSlot) {
+    return instantiateActorModel(this.scene, slot, this.models.get(slot)!);
   }
 
   private visual(actor: ViewActor) {
     const isPlayer = actor.kind === "player";
-    const source = isPlayer ? "courier" : actor.kind === "dummy" ? "guard" : actor.kind;
+    const source = isPlayer ? "courier" : actor.kind === "skitter" || actor.kind === "keeper" ? actor.kind : "guard";
     const body = this.instantiate(source);
     if (actor.kind === "dummy") body.node.scaling.setAll(1.18);
     const shadow = MeshBuilder.CreateDisc("Ground contact", { radius: isPlayer ? .43 : .58, tessellation: 13 }, this.scene);
@@ -413,8 +404,8 @@ export class GameView {
   }
 
   private setFamily(visual: Visual, family: Family) {
-    visual.creature?.node.dispose();
-    visual.weapon?.node.dispose();
+    visual.creature?.dispose();
+    visual.weapon?.dispose();
     if (visual.mothAnimation) {
       for (const name of ["torso", "head", "arm_near", "arm_far", "elbow_near", "elbow_far"]) {
         const joint = visual.model.parts.get(name);
@@ -423,8 +414,8 @@ export class GameView {
     }
     visual.family = family;
     visual.creature = this.instantiate(family);
-    visual.weapon = this.instantiate(family + "-weapon");
-    visual.weapon.node.parent = visual.model.node;
+    visual.weapon = this.instantiate(`${family}-weapon`);
+    visual.weapon.node.parent = visual.model.weaponSocket ?? visual.model.node;
     visual.mothAnimation = family === "moth" ? new MothAnimation(visual.model, visual.creature, visual.weapon) : undefined;
   }
 
@@ -503,6 +494,7 @@ export class GameView {
     const body = visual.model.node;
     const t = this.clock;
     body.rotation.y = actor.facing < 0 ? Math.PI : 0;
+    visual.model.animation?.pose(actor, dt);
     if (visual.mothAnimation) {
       visual.mothAnimation.pose(actor, t, dt, visual.reaction, rescueTarget);
       visual.reaction = Math.max(0, visual.reaction - dt * .9);
@@ -518,8 +510,10 @@ export class GameView {
     const active = actor.age >= wind;
     const hitPose = move ? active ? 1 - Math.pow(progress, 1.6) * .44 : -.38 * (actor.age / Math.max(1, wind)) : 0;
     const walk = actor.moving ? Math.sin(t * (isPlayer ? 12 : 8)) : 0;
-    body.rotation.z = actor.phase === "down" ? -.97 : actor.phase === "hurt" ? -.14 : actor.phase === "dodge" ? .33 : hitPose * .17;
-    body.position.y = visual.at.y + (actor.moving ? Math.abs(Math.sin(t * 12)) * .054 : 0);
+    if (!visual.model.animation) {
+      body.rotation.z = actor.phase === "down" ? -.97 : actor.phase === "hurt" ? -.14 : actor.phase === "dodge" ? .33 : hitPose * .17;
+      body.position.y = visual.at.y + (actor.moving ? Math.abs(Math.sin(t * 12)) * .054 : 0);
+    }
     const set = (part: string, x: number, z: number) => {
       const node = parts.get(part);
       if (node) { node.rotation.x = x; node.rotation.z = z; }
@@ -569,11 +563,11 @@ export class GameView {
       }
       weapon.node.setEnabled(fold > .21 && actor.hp > 0);
       weapon.node.scaling.setAll(Math.max(.1, fold));
-      weapon.node.position.set(.39 + Math.max(0, hitPose) * .32, 1.12 + (actor.phase === "skill" && actor.family === "moth" ? .36 : 0), -.21);
-      weapon.node.rotation.z = move ? accent * side * .54 - .24 : Math.sin(t * 3) * .055 + .22;
-      weapon.node.rotation.y = move ? side * (progress - .39) * 1.7 : -.35;
-      if (actor.phase === "mastery") weapon.node.rotation.x = progress * 1.75;
-      else weapon.node.rotation.x = 0;
+      if (!visual.model.weaponSocket) {
+        weapon.node.position.set(.39 + Math.max(0, hitPose) * .32, 1.12 + (actor.phase === "skill" && actor.family === "moth" ? .36 : 0), -.21);
+        weapon.node.rotation.set(actor.phase === "mastery" ? progress * 1.75 : 0, move ? side * (progress - .39) * 1.7 : -.35,
+          move ? accent * side * .54 - .24 : Math.sin(t * 3) * .055 + .22);
+      }
     } else {
       const crawler = actor.kind === "skitter";
       const keeper = actor.kind === "keeper";
@@ -619,8 +613,23 @@ export class GameView {
           junctionLamp.emissiveColor.set(.46, .31, .14);
         }
       }
+      if (world.mission === "terminal") {
+        for (const { id, readerBit } of markers) {
+          const station = this.palette.get(id + " station status");
+          if (!station) continue;
+          const active = readerBit ? !!(world.readerMask & readerBit)
+            : world.readerMask === TERMINAL_READERS_COMPLETE && (world.status === "signal" || world.status === "complete");
+          if (active) {
+            station.diffuseColor.set(.48, .83, .67);
+            station.emissiveColor.set(.16, .59, .41);
+          } else {
+            station.diffuseColor.set(.83, .64, .36);
+            station.emissiveColor.set(.46, .31, .14);
+          }
+        }
+      }
       for (const [id, visual] of this.visuals) if (!world.actors.has(id)) {
-        visual.model.node.dispose(); visual.creature?.node.dispose(); visual.shadow.dispose(); visual.label.remove();
+        visual.weapon?.dispose(); visual.model.dispose(); visual.creature?.dispose(); visual.shadow.dispose(); visual.label.remove();
         this.visuals.delete(id);
       }
       for (const [id, actor] of world.actors) {
@@ -647,7 +656,8 @@ export class GameView {
       }
       for (const point of markers) {
         const label = this.labels.get(point.id);
-        if (label) this.project(label, new Vector3(point.x, point.id === "advance" || point.id === "signal" ? 2.48 : 1.33, point.z));
+        const height = point.id === "advance" || point.id === "signal" ? 2.48 : world.mission === "terminal" ? .66 : 1.33;
+        if (label) this.project(label, new Vector3(point.x, height, point.z));
       }
     }
     for (let i = this.effects.length - 1; i >= 0; i--) {

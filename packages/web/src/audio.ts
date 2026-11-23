@@ -1,11 +1,11 @@
 import type { CombatEvent } from "../../shared/src/combat.ts";
+import { loadAudioAssets } from "./audio-assets.ts";
 
 interface MusicStem {
   source: AudioBufferSourceNode;
   fader: GainNode;
 }
 
-const missionBeat = 60 / 136; // The route and fight stems share this tempo in scripts/score.mjs.
 const bedLevel = .78;
 
 export class GameAudio {
@@ -21,6 +21,7 @@ export class GameAudio {
   private playing = "";
   private combatMix = false;
   private downbeat = 0;
+  private missionBeat = 0;
   private resumeBedAt = 0;
   private lastHit = 0;
 
@@ -41,12 +42,13 @@ export class GameAudio {
 
   private async load() {
     const audio = this.context!;
-    const names = ["plaza", "lane", "fight", "arm", "hit", "swing", "windup", "dodge", "observe", "clear"];
-    await Promise.all(names.map(async (name) => {
-      const response = await fetch("/audio/" + name + ".wav");
-      if (!response.ok) throw new Error("Audio could not be loaded.");
-      this.buffers.set(name, await audio.decodeAudioData(await response.arrayBuffer()));
-    }));
+    const { buffers, missionBeat } = await loadAudioAssets(async (path) => {
+      const response = await fetch(path);
+      if (!response.ok) throw new Error(`Audio could not be loaded from ${path}.`);
+      return audio.decodeAudioData(await response.arrayBuffer());
+    });
+    this.buffers = buffers;
+    this.missionBeat = missionBeat;
     this.music = audio.createGain();
     this.music.gain.value = bedLevel;
     this.music.connect(audio.destination);
@@ -89,8 +91,8 @@ export class GameAudio {
       }
     } else if (this.combatMix === this.active) return;
     this.combatMix = this.active;
-    const beat = Math.max(0, Math.ceil((now + .012 - this.downbeat) / missionBeat));
-    const fadeAt = changedPlace ? this.downbeat : this.downbeat + beat * missionBeat;
+    const beat = Math.max(0, Math.ceil((now + .012 - this.downbeat) / this.missionBeat));
+    const fadeAt = changedPlace ? this.downbeat : this.downbeat + beat * this.missionBeat;
     for (const [name, { fader }] of this.beds) {
       const level = name === "plaza" ? .88 : name === "lane" ? this.active ? .54 : .84 : this.active ? .86 : 0;
       fader.gain.cancelScheduledValues(now);
