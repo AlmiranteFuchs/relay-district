@@ -1,5 +1,5 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
 export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest";
 export const TICK_RATE = 60;
@@ -137,6 +137,11 @@ export const JOBS: Record<Mission, {
     title: "East Terminal", description: "Match both halves of the fare, drive back the patrol, and recover the manifest.",
     clearLore: "manifest", requiresChapter: true, prerequisite: "return",
   },
+  watch: {
+    title: "Terminal Watch",
+    description: "Repeatable contract. Clear two patrols. Keep everyone on their feet to earn the Signal Tag.",
+    prerequisite: "terminal",
+  },
   platform: { title: "Platform Sweep", description: "Clear a crowded platform and trace the Glass Heron signal.", reward: "heron", requiresChapter: true },
   transformer: { title: "Transformer Trial", description: "Break through the substation's guard and trace Cinder Boar.", reward: "boar", requiresChapter: true },
   training: { title: "Practice floor", description: "Try a discovered form or complete the equipped form's mastery drill." },
@@ -157,6 +162,7 @@ export interface Profile {
   catalystProgress: Mission[];
   trinket: string;
   roomTheme: string;
+  watchCommendation?: true;
 }
 
 export function battleRank(xp: number): number {
@@ -164,7 +170,13 @@ export function battleRank(xp: number): number {
 }
 
 export const TRINKETS = ["Fare token", "Copper ribbon", "Blue bell"];
+export const SIGNAL_TAG = "Signal Tag";
+export const TERMINAL_WATCH_XP = 28;
 export const ROOM_THEMES = ["Station blue", "Amber window", "Moss glass"];
+
+export function availableTrinkets(profile: Profile): string[] {
+  return profile.watchCommendation ? [...TRINKETS, SIGNAL_TAG] : TRINKETS;
+}
 
 export function isFamily(value: unknown): value is Family {
   return typeof value === "string" && Object.hasOwn(FORMS, value);

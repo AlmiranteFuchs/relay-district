@@ -468,6 +468,102 @@ test("a solo courier can use both East Terminal readers and clear the patrol", {
   }
 });
 
+test("Terminal Watch pays for each clear and requires a clean run for the Signal Tag", { timeout: 120000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter", "chapter");
+      assert.equal(server.store.morph(id, "brick", "moth").ok, true);
+      server.store.reward([id], "night", "night");
+      server.store.reward([id], "return", "return");
+      assert.equal(server.store.morph(id, "moth", "brick").ok, true);
+      if (account !== guest) server.store.reward([id], "terminal", "terminal");
+    }
+    const party = [alpha, beta];
+    const initial = await Promise.all(party.map((account) => account.profile()));
+    for (const profile of initial) {
+      assert.equal(profile.catalyst, false);
+      assert.deepEqual(profile.catalystProgress, ["terminal"]);
+    }
+
+    await assert.rejects(guest.sdk.create("mission", { mission: "watch" }), /Clear East Terminal/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "watch" }) as Socket);
+    rooms.push(first);
+    await assert.rejects(guest.sdk.joinById(first.roomId), /Clear East Terminal/);
+    const other = connectHandlers(await beta.sdk.joinById(first.roomId) as Socket);
+    rooms.push(other);
+    await Promise.all([local(first), local(other)]);
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    const helper = mission["players"].get(first.sessionId)!.player;
+    const casualty = mission["players"].get(other.sessionId)!.player;
+    const begin = async () => {
+      first.send("begin");
+      await until("both clients in the first formation", () => [first, other].every((room) => room.state.status === "combat" && room.state.wave === 0));
+    };
+    const finish = async () => {
+      const enemies = () => [...first.state.actors.values()].filter((actor) => actor.kind !== "player").map((actor) => actor.kind).sort();
+      assert.deepEqual(enemies(), ["guard", "skitter"]);
+      await fight([a, b], "interlude", 28000);
+      await until("both clients in the second formation", () => [first, other].every((room) => room.state.status === "combat" && room.state.wave === 1));
+      assert.deepEqual(enemies(), ["keeper", "skitter"]);
+      await fight([a, b], "complete", 32000);
+      await until("both clients see the contract clear", () => other.state.status === "complete");
+    };
+    const verifyRewards = async (clears: number, clean: boolean) => {
+      for (const [index, account] of party.entries()) {
+        const profile = await account.profile();
+        assert.equal(profile.battleXp, initial[index].battleXp + clears * 28);
+        assert.deepEqual(profile.lore, initial[index].lore);
+        assert.equal(profile.catalyst, false);
+        assert.deepEqual(profile.catalystProgress, initial[index].catalystProgress);
+        assert.equal(profile.watchCommendation === true, clean);
+        assert.equal(profile.trinket, initial[index].trinket);
+      }
+    };
+
+    await begin();
+    helper.hp = casualty.hp = 0;
+    await until("the party can retry its wipe", () => first.state.status === "failed" && other.state.status === "failed");
+    await verifyRewards(0, false);
+
+    await begin();
+    casualty.hp = 0;
+    await until("both clients see a downed courier", () => !b.me.hp && first.state.actors.get(other.sessionId)?.hp === 0);
+    first.send("interact");
+    await until("the recalled companion performs a rescue", () => b.me.hp === RESCUE_HEALTH && b.me.rescued);
+    await finish();
+    await verifyRewards(1, false);
+
+    const plaza = connectHandlers(await alpha.sdk.joinOrCreate("plaza") as Socket);
+    rooms.push(plaza);
+    await local(plaza);
+    let updated: Profile | undefined;
+    plaza.onMessage("profile", (profile: Profile) => { updated = profile; });
+    const equipSignalTag = async () => {
+      updated = undefined;
+      plaza.send("customize", { trinket: "Signal Tag" });
+      return until("the companion room replies to the keepsake change", () => updated);
+    };
+    assert.equal((await equipSignalTag()).trinket, initial[0].trinket);
+    assert.equal(plaza.state.actors.get(plaza.sessionId)?.signalTag, false);
+
+    await begin();
+    await finish();
+    await verifyRewards(2, true);
+    assert.equal((await equipSignalTag()).trinket, "Signal Tag");
+    assert.equal((await alpha.profile()).trinket, "Signal Tag");
+    await until("the equipped keepsake is in actor state", () => plaza.state.actors.get(plaza.sessionId)?.signalTag);
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
 test("two players clear the chapter, see identical hit confirms, and keep rewards", { timeout: 85000 }, async () => {
   const server = await runServer({ port: 0, database: ":memory:" });
   const origin = "http://127.0.0.1:" + server.port;

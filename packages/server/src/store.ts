@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { JOBS, MORPH_CLEARS, ROOM_THEMES, TRINKETS, isFamily, type Family, type Lore, type Mission, type Profile } from "../../shared/src/content.ts";
+import { availableTrinkets, JOBS, MORPH_CLEARS, ROOM_THEMES, TERMINAL_WATCH_XP, TRINKETS, isFamily,
+  type Family, type Lore, type Mission, type Profile } from "../../shared/src/content.ts";
 
 interface Row { id: string; profile: string; cared_at: number }
 export interface Session { id: string; profile: Profile }
@@ -112,7 +113,7 @@ export class Store {
     return this.transaction(() => {
       const profile = this.profile(id);
       if (typeof update.companion === "string") profile.companion = clean(update.companion, 20) || profile.companion;
-      if (typeof update.trinket === "string" && TRINKETS.includes(update.trinket)) profile.trinket = update.trinket;
+      if (typeof update.trinket === "string" && availableTrinkets(profile).includes(update.trinket)) profile.trinket = update.trinket;
       if (typeof update.roomTheme === "string" && ROOM_THEMES.includes(update.roomTheme)) profile.roomTheme = update.roomTheme;
       const row = this.db.prepare("SELECT cared_at FROM profiles WHERE id = ?").get(id) as Pick<Row, "cared_at">;
       if (update.play === true && now - row.cared_at > 10000) {
@@ -129,22 +130,31 @@ export class Store {
     return profile;
   }
 
-  reward(ids: string[], runId: string, mission: Mission, trainingFamily?: Family, practice = false) {
+  reward(ids: string[], runId: string, mission: Mission, options: {
+    trainingFamily?: Family; practice?: boolean; watchCommended?: boolean;
+  } = {}) {
     return this.transaction(() => {
       const result = new Map<string, Profile>();
       for (const id of new Set(ids)) {
         const profile = this.profile(id);
         result.set(id, profile);
-        if (practice) continue;
+        if (options.practice) continue;
         const granted = this.db.prepare("INSERT OR IGNORE INTO rewards VALUES (?, ?)").run(id, "clear:" + runId);
         if (!granted.changes) continue;
         if (mission === "training") {
+          const { trainingFamily } = options;
           if (!isFamily(trainingFamily) || trainingFamily !== profile.family) continue;
           const drill = this.db.prepare("INSERT OR IGNORE INTO rewards VALUES (?, ?)").run(id, "mastery:" + trainingFamily);
           if (drill.changes) {
             profile.mastery.push(trainingFamily);
             profile.battleXp += 34;
           }
+          this.save(id, profile);
+          continue;
+        }
+        if (mission === "watch") {
+          profile.battleXp += TERMINAL_WATCH_XP;
+          if (options.watchCommended) profile.watchCommendation = true;
           this.save(id, profile);
           continue;
         }

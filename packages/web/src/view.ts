@@ -13,7 +13,7 @@ export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
   kind: string; hp: number; maxHp: number; energy: number; armed: boolean; connected: boolean;
   phase: string; age: number; duration: number; combo: number; step: number; ack: number; moving: boolean; rank: number;
-  rescued: boolean; rescueTarget: string; rescueTicks: number;
+  rescued: boolean; rescueTarget: string; rescueTicks: number; signalTag: boolean;
 }
 export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
@@ -25,6 +25,7 @@ interface Visual {
   creature?: ActorModel;
   weapon?: ActorModel;
   mothAnimation?: MothAnimation;
+  signalTag?: TransformNode;
   at: Vector3;
   shadow: Mesh;
   family: Family;
@@ -265,7 +266,7 @@ export class GameView {
     const plaza = world.kind === "plaza";
     const night = world.mission === "night";
     const junction = world.mission === "return";
-    const terminal = world.mission === "terminal";
+    const terminal = world.mission === "terminal" || world.mission === "watch";
     const relay = junction || terminal || world.stage === 1 || world.mission === "transformer";
     const panel = this.stationWall();
     const inset = this.material("inset", "#46586b");
@@ -324,8 +325,8 @@ export class GameView {
     if (night) this.nightPlatform(root);
     else if (junction) this.returnJunction(root);
     else if (terminal) {
-      this.sign("EAST TERMINAL", "OUTBOUND AND RETURN READERS", -7.95, 3.02, 4.97, root);
-      this.sign("TERMINAL CONTROL", "MANIFEST ACCESS / LINE 07", 7.92, 1.62, 5.06, root, true);
+      this.sign("EAST TERMINAL", world.mission === "watch" ? "NIGHT SERVICE WATCH" : "OUTBOUND AND RETURN READERS", -7.95, 3.02, 4.97, root);
+      this.sign("TERMINAL CONTROL", world.mission === "watch" ? "PATROL AREA / LINE 07" : "MANIFEST ACCESS / LINE 07", 7.92, 1.62, 5.06, root, true);
     } else {
       this.sign(plaza ? "REPAIR PLAZA" : relay ? "LINE 07" : "SERVICE ENTRY",
         plaza ? "BOND REGISTRY / DISTRICT DISPATCH" : relay ? "SIGNAL AUTHORITY / PLATFORM SEALED" : "AUTHORIZED COURIERS / AUTUMN 2007",
@@ -406,6 +407,7 @@ export class GameView {
   private setFamily(visual: Visual, family: Family) {
     visual.creature?.dispose();
     visual.weapon?.dispose();
+    visual.signalTag = undefined;
     if (visual.mothAnimation) {
       for (const name of ["torso", "head", "arm_near", "arm_far", "elbow_near", "elbow_far"]) {
         const joint = visual.model.parts.get(name);
@@ -417,6 +419,28 @@ export class GameView {
     visual.weapon = this.instantiate(`${family}-weapon`);
     visual.weapon.node.parent = visual.model.weaponSocket ?? visual.model.node;
     visual.mothAnimation = family === "moth" ? new MothAnimation(visual.model, visual.creature, visual.weapon) : undefined;
+  }
+
+  private makeSignalTag(parent: TransformNode) {
+    const tag = new TransformNode("Signal Tag keepsake", this.scene);
+    tag.parent = parent;
+    tag.position.set(-.22, -.11, -.39);
+    tag.rotation.z = -.24;
+    const brass = this.material("Signal Tag brass", "#c39758", true);
+    const ring = MeshBuilder.CreateTorus("Signal Tag loop", { diameter: .11, thickness: .022, tessellation: 10 }, this.scene);
+    ring.rotation.x = Math.PI / 2;
+    ring.material = brass;
+    ring.parent = tag;
+    const badge = MeshBuilder.CreateCylinder("Signal Tag enamel", { height: .044, diameter: .26, tessellation: 6 }, this.scene);
+    badge.rotation.x = Math.PI / 2;
+    badge.position.y = -.135;
+    const enamel = this.material("Signal Tag blue enamel", "#4b9b9e", true);
+    enamel.emissiveColor.set(.05, .18, .19);
+    badge.material = enamel;
+    badge.parent = tag;
+    this.mesh("Signal Tag contact", [.14, .027, .02], [0, -.12, -.028], brass, tag);
+    this.mesh("Signal Tag contact", [.085, .027, .02], [0, -.169, -.028], brass, tag);
+    return tag;
   }
 
   private project(label: HTMLDivElement, position: Vector3) {
@@ -636,6 +660,8 @@ export class GameView {
         let visual = this.visuals.get(id);
         if (!visual) { visual = this.visual(actor); this.visuals.set(id, visual); }
         if (actor.kind === "player" && visual.family !== actor.family) this.setFamily(visual, actor.family);
+        if (actor.signalTag && visual.creature && !visual.signalTag) visual.signalTag = this.makeSignalTag(visual.creature.node);
+        visual.signalTag?.setEnabled(actor.signalTag);
         const target = new Vector3(actor.x, actor.y, actor.z);
         const factor = Vector3.DistanceSquared(target, visual.at) > 14 ? 1 : 1 - Math.exp(-dt * (id === self ? 34 : 13));
         Vector3.LerpToRef(visual.at, target, factor, visual.at);

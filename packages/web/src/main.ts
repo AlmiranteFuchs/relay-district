@@ -1,6 +1,6 @@
 import { Client, type Room } from "@colyseus/sdk";
 import { ARM_TICKS, canRescueIn, DT, rescueDistance, RESCUE_RANGE, RESCUE_TICKS, stepWalk, type CombatEvent, type Input } from "../../shared/src/combat.ts";
-import { battleRank, FORMS, isFamily, JOBS, LORE, missionLockReason, ROOM_THEMES, TRINKETS, type Action, type Family,
+import { availableTrinkets, battleRank, FORMS, isFamily, JOBS, LORE, missionLockReason, ROOM_THEMES, type Action, type Family,
   type Mission, type Profile } from "../../shared/src/content.ts";
 import { nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
@@ -111,7 +111,7 @@ function capture(state: Wire) {
       family: entry.family, kind: entry.kind, hp: entry.hp, maxHp: entry.maxHp, energy: entry.energy,
       armed: entry.armed, connected: entry.connected, phase: entry.phase, age: entry.age, duration: entry.duration,
       combo: entry.combo, step: entry.step, ack: entry.ack, moving: entry.moving, rank: entry.rank,
-      rescued: entry.rescued, rescueTarget: entry.rescueTarget, rescueTicks: entry.rescueTicks,
+      rescued: entry.rescued, rescueTarget: entry.rescueTarget, rescueTicks: entry.rescueTicks, signalTag: entry.signalTag,
     });
   });
   return {
@@ -264,7 +264,7 @@ function drawPanel() {
       + "<strong>" + escape(profile.companion) + "</strong><small>" + form.name + " • " + escape(profile.trinket) + "</small></div>";
     body += "<p>Bond " + profile.bond + " • Battle rank " + battleRank(profile.battleXp) + " • " + profile.battleXp + " XP</p>";
     body += '<form id="customize" class="panel-grid"><label>Name <input name="companion" maxlength="20" value="' + escape(profile.companion) + '"></label>'
-      + '<label>Trinket <select name="trinket">' + options(TRINKETS, profile.trinket) + "</select></label>"
+      + '<label>Trinket <select name="trinket">' + options(availableTrinkets(profile), profile.trinket) + "</select></label>"
       + '<label>Room <select name="roomTheme">' + options(ROOM_THEMES, profile.roomTheme) + '</select></label>'
       + '<div><button class="button">Save room</button> ' + button("Play together", "care") + "</div></form>";
     body += "<p class='quiet'>Favorite keepsake: the fare token. Former shapes: "
@@ -338,8 +338,9 @@ function updateHUD(actor?: ViewActor) {
     : ({
       lobby: "Share room code " + world.code + ", then start the job.",
       approach: world.mission === "night" ? "Follow the train along Platform 07." : "Read the maintenance log or head down the service lane.",
-      combat: world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
-      interlude: "Another group is approaching.",
+      combat: world.mission === "watch" ? `Patrol ${world.wave + 1} of 2. Clear the lane.`
+        : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
+      interlude: world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",
       route: "Use the blue door marker to enter the relay room.",
       signal: signalObjective(world),
       complete: "Job complete. Use Mission to return to the plaza.",

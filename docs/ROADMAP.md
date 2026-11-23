@@ -10,6 +10,7 @@ The project has a shared plaza for up to 16 LAN players, four-player instance ro
 | --- | --- | --- |
 | Asset replacement | Imported a skinned Blender GLB, sampled its clips on independent courier rigs, attached the weapon, and tested score fallback and synchronized stems. The bundled art remains the default. | Try a player-authored courier in a full fight and approve its period look at both aspect ratios. |
 | East Terminal | Verified real solo, two-player, and four-client clears. The four-client run used 100 ms simulated round-trip latency on one machine. Isolated Chrome verified Dispatch, reader navigation, objective text, and the journal. SQLite coverage verifies restart and duplicate rewards. | Run a fresh-player chapter walkthrough and the physical two-device LAN check. |
+| Optional contracts | Terminal Watch is repeatable after East Terminal. Two SDK clients verified a wipe, a rescue-assisted clear, and a clean replay that unlocks the Signal Tag. Chrome verified the patrol cues and equipping the keepsake. SQLite coverage verifies restart and duplicate rewards. | Add support contribution and playtest the patrols across the four companion forms. |
 
 ## Design references
 

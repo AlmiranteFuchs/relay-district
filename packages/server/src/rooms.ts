@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
-  battleRank, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, TICK_RATE, type Action, type Family, type Mission, type Profile,
+  battleRank, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, SIGNAL_TAG, TICK_RATE,
+  type Action, type Family, type Mission, type Profile,
 } from "../../shared/src/content.ts";
 import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
@@ -113,6 +114,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     entry.player.companion = profile.companion;
     entry.player.rank = battleRank(profile.battleXp);
     entry.player.mastered = profile.mastery.includes(entry.player.family);
+    this.state.actors.get(entry.player.id)!.signalTag = profile.trinket === SIGNAL_TAG;
     if (entry.connected) entry.client.send("profile", profile);
   }
 
@@ -241,6 +243,10 @@ const returnWaves = [
   wave(["keeper", 0.2, -1.45], ["skitter", 4.9, 3.35]),
 ];
 const terminalPatrol = wave(["skitter", -2.8, -1.1], ["guard", 4.4, 0.1], ["skitter", 7.1, 2.7]);
+const watchWaves = [
+  wave(["skitter", -2.5, 2.1], ["guard", 3.8, -1.7]),
+  wave(["keeper", 4.5, -.9], ["skitter", -5.8, 2.9]),
+];
 
 export class MissionRoom extends GameRoom {
   maxClients = 4;
@@ -249,6 +255,7 @@ export class MissionRoom extends GameRoom {
   private runId = "";
   private waveReady = 0;
   private serial = 0;
+  private watchCommended = true;
 
   onCreate(raw: unknown) {
     const options = asRecord(raw);
@@ -307,6 +314,7 @@ export class MissionRoom extends GameRoom {
     this.state.readerMask = 0;
     this.state.status = "approach";
     this.waveReady = 0;
+    this.watchCommended = true;
     this.clearEnemies();
     [...this.players.values()].forEach((entry, index) => {
       entry.rescue = undefined;
@@ -326,6 +334,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "terminal") {
       this.state.status = "signal";
       this.story(JOBS.terminal.title, "The terminal split each fare between two readers. Bring your partner to both with its weapon recalled. A party can split up and use one reader each.");
+    } else if (this.mission === "watch") {
+      this.spawn(watchWaves[0]);
+      this.story(JOBS.watch.title, "Dispatch needs the night crew to keep this platform open. Clear both patrols. If everyone stays on their feet, take a Signal Tag home for your partner.");
     } else if (this.mission === "training") {
       this.spawn(wave(["dummy", 0, 0]));
       const target = [...this.enemies.values()][0];
@@ -357,6 +368,11 @@ export class MissionRoom extends GameRoom {
   }
 
   protected override afterStep() {
+    if (this.mission === "watch" && this.watchCommended && this.state.status === "combat"
+      && this.actors().some((player) => player.hp === 0)) {
+      this.watchCommended = false;
+      this.broadcast("notice", "A courier went down. The patrol contract can still be cleared.");
+    }
     this.stepRescues();
     if (this.state.status === "approach" && this.actors().some((player) => player.x > -2.35)) {
       this.spawn(this.mission === "night" ? nightWave : chapterWaves[0]);
@@ -364,7 +380,7 @@ export class MissionRoom extends GameRoom {
     }
     if (this.state.status === "interlude" && this.waveReady && this.state.frame >= this.waveReady) {
       this.waveReady = 0;
-      this.spawn(chapterWaves[1]);
+      this.spawn(this.mission === "watch" ? watchWaves[1] : chapterWaves[1]);
       return;
     }
     if (this.state.status !== "combat") return;
@@ -391,6 +407,13 @@ export class MissionRoom extends GameRoom {
     if (this.mission === "terminal") {
       this.state.status = "signal";
       this.story("Terminal clear", "The manifest drawer is open. Take your recalled partner to the east end and read the manifest together.");
+      return;
+    }
+    if (this.mission === "watch" && this.state.wave === 0) {
+      this.state.wave = 1;
+      this.state.status = "interlude";
+      this.waveReady = this.state.frame + 150;
+      this.story("Patrol incoming", "Your partner picks up movement at both ends of the platform. A Switchkeeper is coming down the east lane.");
       return;
     }
     if (this.mission !== "chapter") { this.finish(); return; }
@@ -514,7 +537,9 @@ export class MissionRoom extends GameRoom {
   private finish() {
     const entries = [...this.players.values()];
     for (const entry of entries) entry.rescue = undefined;
-    const profiles = store.reward(entries.map((entry) => entry.profileId), this.runId, this.mission, entries[0]?.player.family, this.state.practice);
+    const profiles = store.reward(entries.map((entry) => entry.profileId), this.runId, this.mission, {
+      trainingFamily: entries[0]?.player.family, practice: this.state.practice, watchCommended: this.watchCommended,
+    });
     for (const entry of entries) {
       const profile = profiles.get(entry.profileId);
       if (profile) this.applyProfile(entry, profile);
@@ -528,6 +553,10 @@ export class MissionRoom extends GameRoom {
       this.story(LORE[memory].title, LORE[memory].text);
     } else if (this.mission === "training") {
       this.story("Practice complete", this.state.practice ? "Return to the plaza when you’re ready." : "Mastery recorded in your partner’s journal. The follow-up becomes usable at battle rank 3.");
+    } else if (this.mission === "watch") {
+      this.story("The watch is over", this.watchCommended
+        ? "Everyone stayed on their feet. The Signal Tag is available in your companion room."
+        : "The terminal is safe. To earn the Signal Tag, complete both patrols without anyone going down.");
     } else this.story("Signal recovered", "A new form is recorded in your partner’s journal. Explore it at the plaza workbench.");
   }
 }
