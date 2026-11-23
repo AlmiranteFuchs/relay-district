@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -152,6 +152,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "Mara logged three partners by name on the pump roster after the evacuation. They had volunteered to keep working with their couriers. The Authority's copy lists three pieces of equipment with the same clock-out times. Your partner rubs the paper at the first name. The 05:20 train picked up the original roster here and is carrying it to the Bellhouse, where waiting crews can answer those names in person.",
     hint: "Read the Pump Record after defeating the Switchkeeper at Pump Court",
   },
+  bellhouse: {
+    title: "Bellhouse witnessed roster",
+    text: "Spindle, Nacre, and Pith. Three couriers have signed beside those names, including Ina, who still uses a cane from the night at the wall. The bell strokes were how the partners announced themselves for a shift. They made their own marks beside the signatures. Your partner presses its shell to the three-stamp seal and taps back. Ina has asked Dispatch to bring the roster to the Registry Annex in daylight.",
+    hint: "Answer the Bellhouse calls and read the roster at the east desk",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -190,6 +195,10 @@ export const JOBS: Record<Mission, {
   pump: {
     title: "Pump Court", description: "Follow the train into the pump hall and fight the Switchkeeper between pressure discharges.",
     clearLore: "pump", requiresChapter: true, prerequisite: "lift",
+  },
+  bellhouse: {
+    title: "Bellhouse", description: "Answer three names from the recovered roster and hold off the guard until the crews can sign it.",
+    clearLore: "bellhouse", requiresChapter: true, prerequisite: "pump",
   },
   bayrelay: {
     title: "Bay Four Relay",
@@ -233,6 +242,7 @@ export const TRINKETS = ["Fare token", "Copper ribbon", "Blue bell"];
 export const SIGNAL_TAG = "Signal Tag";
 export const BAY_FOUR_TICKET = "Bay Four Ticket";
 export const RELAY_PENNANT = "Relay Pennant";
+export const BELLHOUSE_SEAL = "Bellhouse Seal";
 export const BAY_RELAY_XP = 32;
 export const TERMINAL_WATCH_XP = 28;
 export const ROOM_THEMES = ["Station blue", "Amber window", "Moss glass"];
@@ -242,6 +252,7 @@ export function availableTrinkets(profile: Profile): string[] {
   if (profile.watchCommendation) keepsakes.push(SIGNAL_TAG);
   if (profile.clears.includes("departure")) keepsakes.push(BAY_FOUR_TICKET);
   if (profile.bayRelayComplete) keepsakes.push(RELAY_PENNANT);
+  if (profile.clears.includes("bellhouse")) keepsakes.push(BELLHOUSE_SEAL);
   return keepsakes;
 }
 

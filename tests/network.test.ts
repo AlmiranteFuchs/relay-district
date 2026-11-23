@@ -9,15 +9,17 @@ import { matchMaker } from "@colyseus/core";
 import { runServer } from "../packages/server/src/http.ts";
 import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
-import { BAY_FOUR_TICKET, RELAY_PENNANT, type Action, type Family, type Mission, type Profile } from "../packages/shared/src/content.ts";
+import { availableTrinkets, BAY_FOUR_TICKET, BELLHOUSE_SEAL, RELAY_PENNANT, type Action, type Family, type Mission,
+  type Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
 import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
   type CompanionPlayMessage, type CompanionPlayRequest, type Signal } from "../packages/shared/src/companion-play.ts";
 import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
-import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, DEPARTURE_REINFORCEMENT_TICKS,
+import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, BELLHOUSE_CALLS,
+  BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS,
   LIFT_LEG_TICKS, LIFT_PHASE, PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE,
-  VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
+  type BellhouseCue, VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -1521,6 +1523,150 @@ test("Pump Court cycles its discharges, honors evasion, and awards one Pump Reco
       assert.deepEqual(profile.lore, [...initial[index].lore, "pump"]);
       assert.deepEqual(profile.clears, [...initial[index].clears, "pump"]);
     }
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("Bellhouse shares distinct name calls in either order with combat and unlocks the Seal on clear", { timeout: 95000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    const party = [alpha, beta];
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      server.store.reward([id], "lift-unlock", "lift");
+      if (account !== guest) server.store.reward([id], "pump-unlock", "pump");
+    }
+    const initial = await Promise.all(party.map((account) => account.profile()));
+    for (const profile of initial) assert.ok(!availableTrinkets(profile).includes(BELLHOUSE_SEAL));
+    await assert.rejects(guest.sdk.create("mission", { mission: "bellhouse" }), /Clear Pump Court/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "bellhouse" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear Pump Court/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const [spindle, nacre, pith] = BELLHOUSE_CALLS;
+    const [desk] = routeMarkers("bellhouse", 3);
+    const phase = (stage: number, status: string, mask: number) => [first, other].every((room) =>
+      room.state.stage === stage && room.state.status === status && room.state.readerMask === mask);
+    const foes = (room: Socket) => [...room.state.actors.values()].filter((actor) => actor.kind !== "player" && actor.hp > 0);
+    const expected: BellhouseCue[] = [];
+    const heard = [first, other].map((room) => {
+      const notes: BellhouseCue[] = [];
+      room.onMessage("bell", (event: BellhouseCue) => { notes.push(event); });
+      return notes;
+    });
+    const useWithCompanion = async (courier: TestCourier, marker: { x: number; z: number }) => {
+      await courier.go(marker.x, marker.z);
+      await recallForReader(courier);
+    };
+    const ring = (courier: TestCourier, note: BellhouseCue["note"], marker: { x: number; z: number }) => {
+      expected.push({ note, source: courier.room.sessionId, x: marker.x, z: marker.z });
+      courier.room.send("interact");
+    };
+    const confirmBells = async () => {
+      await until("both clients hear each expected name call", () => heard.every((notes) => notes.length === expected.length));
+      for (const notes of heard) assert.deepEqual(notes, expected);
+    };
+    const notices: string[] = [];
+    first.onMessage("notice", (notice: string) => { notices.push(notice); });
+
+    first.send("begin");
+    await until("both players enter the Bellhouse", () => phase(0, "combat", 0));
+    for (const room of [first, other]) assert.deepEqual(foes(room).map((foe) => foe.kind).sort(), ["skitter", "skitter"]);
+    await fight([a, b], "signal", 23000);
+    await until("the name calls are available", () => phase(1, "signal", 0));
+    await Promise.all([a.go(nacre.x, nacre.z), useWithCompanion(b, pith)]);
+    await until("Aster is ready at Nacre Call", () => a.me.phase === "idle");
+    if (!a.me.armed) a.send(0, 0, "morph");
+    await until("Aster holds a weapon", () => a.me.armed && a.me.phase === "idle");
+    first.send("interact");
+    await until("the armed name call asks for recall", () => notices.some((notice) => notice.includes("Recall your partner")));
+    assert.ok(phase(1, "signal", 0));
+    await confirmBells();
+
+    await recallForReader(a);
+    ring(a, 1, nacre);
+    first.send("interact");
+    a.send(0, 0);
+    await until("Nacre starts the guard patrol and the duplicate is processed", () => phase(2, "combat", nacre.readerBit) && a.me.ack === a.seq);
+    for (const room of [first, other]) assert.deepEqual(foes(room).map((foe) => foe.kind).sort(), ["guard", "runner"]);
+    await confirmBells();
+    ring(b, 2, pith);
+    const twoCalls = nacre.readerBit | pith.readerBit;
+    await until("Ivo rings Pith while guards are alive", () => phase(2, "combat", twoCalls));
+    await confirmBells();
+
+    await fight([a, b], "signal", 30000);
+    await until("the quiet call floor keeps the missing name available", () => phase(2, "signal", twoCalls));
+    assert.ok([first, other].every((room) => foes(room).length === 0));
+    assert.deepEqual(await Promise.all(party.map((account) => account.profile())), initial);
+    const partnerSession = other.sessionId;
+    let reconnected = false;
+    other.onReconnect.once(() => { reconnected = true; });
+    other.connection.close(4010, "test drop at the name calls");
+    await until("Ivo reconnects with both names still recorded", () => reconnected && other.sessionId === partnerSession
+      && first.state.actors.get(partnerSession)?.connected && phase(2, "signal", twoCalls));
+    await confirmBells();
+    const caller = b.me.hp > 0 ? b : a;
+    await useWithCompanion(caller, spindle);
+    ring(caller, 0, spindle);
+    await until("the final name opens the Roster Desk", () => phase(3, "signal", BELLHOUSE_CALLS_COMPLETE));
+    await confirmBells();
+    await useWithCompanion(caller, desk);
+    caller.room.send("interact");
+    caller.room.send("interact");
+    await until("both clients see the Bellhouse clear", () => phase(3, "complete", BELLHOUSE_CALLS_COMPLETE));
+    await confirmBells();
+    for (const [index, account] of party.entries()) {
+      const profile = await account.profile();
+      assert.equal(profile.companion, initial[index].companion);
+      assert.equal(profile.battleXp, initial[index].battleXp + 48);
+      assert.equal(profile.bond, initial[index].bond + 6);
+      assert.equal(profile.trinket, initial[index].trinket);
+      assert.deepEqual(profile.lore, [...initial[index].lore, "bellhouse"]);
+      assert.deepEqual(profile.clears, [...initial[index].clears, "bellhouse"]);
+      assert.equal(availableTrinkets(profile).filter((item) => item === BELLHOUSE_SEAL).length, 1);
+    }
+    const plaza = connectHandlers(await alpha.sdk.joinOrCreate("plaza") as Socket);
+    rooms.push(plaza);
+    await local(plaza);
+    let equipped: Profile | undefined;
+    plaza.onMessage("profile", (profile: Profile) => { equipped = profile; });
+    plaza.send("customize", { trinket: BELLHOUSE_SEAL });
+    await until("the earned Seal can be equipped in the plaza", () => equipped?.trinket === BELLHOUSE_SEAL
+      && plaza.state.actors.get(plaza.sessionId)?.bellhouseSeal);
+
+    first.send("begin");
+    await until("replay clears the name calls", () => phase(0, "combat", 0));
+    await fight([a, b], "signal", 23000);
+    await until("replay opens all three calls", () => phase(1, "signal", 0));
+    await Promise.all([useWithCompanion(a, spindle), useWithCompanion(b, pith)]);
+    ring(a, 0, spindle);
+    await until("Spindle can also start the guard patrol", () => phase(2, "combat", spindle.readerBit));
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    const guards = [...mission["enemies"].values()];
+    // Hold the full-health guards here to test all three names before the fight is over.
+    for (const enemy of guards) Object.assign(enemy, { phase: "recover", ticks: 600, target: "" });
+    ring(b, 2, pith);
+    await until("Pith responds to the replay crew", () => phase(2, "combat", spindle.readerBit | pith.readerBit));
+    await useWithCompanion(a, nacre);
+    ring(a, 1, nacre);
+    await until("all names can ring before the guard falls", () => phase(2, "combat", BELLHOUSE_CALLS_COMPLETE));
+    await confirmBells();
+    assert.ok([first, other].every((room) => foes(room).length === 2));
+    for (const enemy of guards) Object.assign(enemy, { phase: "idle", ticks: 0 });
+    await fight([a, b], "signal", 30000);
+    await until("defeating the guards last opens the same desk", () => phase(3, "signal", BELLHOUSE_CALLS_COMPLETE));
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

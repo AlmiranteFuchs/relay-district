@@ -29,13 +29,14 @@ export class ActorState extends Schema {
   declare signalTag: boolean;
   declare bayFourTicket: boolean;
   declare relayPennant: boolean;
+  declare bellhouseSeal: boolean;
 
   constructor() {
     super();
     Object.assign(this, { x: 0, y: 0, z: 0, facing: 1, name: "", companion: "", family: "moth", kind: "player",
       hp: 125, maxHp: 125, energy: 100, armed: false, connected: true, phase: "idle", age: 0,
       duration: 0, combo: 0, step: 0, ack: 0, moving: false, rank: 1, rescued: false, rescueTarget: "", rescueTicks: 0,
-      signalTag: false, bayFourTicket: false, relayPennant: false });
+      signalTag: false, bayFourTicket: false, relayPennant: false, bellhouseSeal: false });
   }
 }
 defineTypes(ActorState, {
@@ -44,6 +45,7 @@ defineTypes(ActorState, {
   armed: "boolean", connected: "boolean", phase: "string", age: "uint16", duration: "uint16",
   combo: "uint16", step: "uint8", ack: "uint32", moving: "boolean", rank: "uint16",
   rescued: "boolean", rescueTarget: "string", rescueTicks: "uint8", signalTag: "boolean", bayFourTicket: "boolean", relayPennant: "boolean",
+  bellhouseSeal: "boolean",
 });
 
 export class CrewAssistState extends Schema implements CrewAssist {

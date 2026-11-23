@@ -52,6 +52,45 @@ function save(name, samples) {
 }
 
 const clip = (name, duration, author) => { const sound = buffer(duration); author(sound); save(name, sound); };
+
+function renderBellhouse() {
+  const bells = [
+    // The low bell blooms after the striker, with a lingering half-frequency hum.
+    { slot: "low", note: 64, ring: .84, swell: .56, strike: .11, modes: [
+      [.5004, .24, 3.0], [1, .54, 3.9], [1.213, .11, 8.8], [2.008, .25, 9.7], [3.071, .11, 19.7],
+    ] },
+    // The middle bell gives a quick, dry confirmation with a bright clapper.
+    { slot: "mid", note: 67, ring: .68, swell: .10, strike: .19, modes: [
+      [.5011, .14, 4.1], [1, .59, 5.2], [1.498, .11, 10.3], [2.017, .32, 12.5], [3.533, .17, 24.2],
+    ] },
+    // The high bell carries a beating pair of modes across its release.
+    { slot: "high", note: 71, ring: .78, swell: .26, strike: .14, modes: [
+      [.4993, .13, 3.3], [1, .52, 4.5], [1.007, .16, 6.4], [2.019, .26, 11.5], [3.845, .19, 22.0],
+    ] },
+  ];
+  for (const { slot, note, ring, swell, strike, modes } of bells) {
+    const pitch = tau * freq(note);
+    const resonance = (t) => {
+      let sample = 0;
+      for (const [ratio, level, decay] of modes) {
+        sample += Math.sin(pitch * ratio * t) * level * Math.exp(-decay * t);
+      }
+      return sample * (1 - swell * Math.exp(-32 * t));
+    };
+    clip("bellhouse-" + slot, ring + .115, (sound) => {
+      voice(sound, 0, ring, .74, resonance);
+      voice(sound, .039, ring, .086, resonance);
+      voice(sound, .102, ring, .042, resonance);
+      voice(sound, 0, .085, strike, (t) => (Math.sin(pitch * 4.181 * t) + .62 * Math.sin(pitch * 6.367 * t)) * Math.exp(-88 * t));
+    });
+  }
+}
+
+if (process.argv.includes("--bellhouse-only")) {
+  renderBellhouse();
+  process.exit(0);
+}
+
 clip("departure", 1.04, (sound) => {
   for (const [start, note] of [[0, 76], [.24, 71]]) {
     const f = tau * freq(note);
@@ -66,6 +105,7 @@ clip("departure", 1.04, (sound) => {
 });
 if (process.argv.includes("--departure-only")) process.exit(0);
 
+renderBellhouse();
 renderScore(out);
 clip("arm", .64, (sound) => { tone(sound, 0, .22, 64, .24); tone(sound, .15, .4, 76, .21); drum(sound, .31, "snare", .048); });
 clip("hit", .26, (sound) => { drum(sound, 0, "kick", .75); drum(sound, .021, "snare", .46); });

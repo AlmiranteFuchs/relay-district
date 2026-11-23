@@ -28,10 +28,13 @@ export const AUDIO_REPLACEMENTS: AudioReplacements = {
 | `observe` | Companion observation, care, completed rescue, and the two playback speeds in Signal Echo. Keep the one-shot short enough to finish between pulses. |
 | `clear` | Mission clear |
 | `departure` | Play together in the companion room after First Departure |
+| `bellhouse-low`, `bellhouse-mid`, and `bellhouse-high` | Bellhouse station confirmations. The companion room plays the three in order. |
 | `lane` and `fight` | Synchronized approach and battle stems |
 
 The bundled files are WAV. Export both mission stems from the same project and sample rate. Start both at the same downbeat and render them to the same sample count, including silence where one layer rests. Export a complete loop with no trailing count-in or extra reverb tail. Set `bpm` to the arrangement's tempo so combat layers fade in on beat. If either stem fails to load or the decoded lengths differ, the game logs a browser warning and uses both bundled stems at their original tempo. Unavailable one-shots and plaza music fall back individually.
 
 Run `npm run assets -- --departure-only` to regenerate the bundled Bay Four cue.
+
+Run `npm run assets -- --bellhouse-only` to regenerate the three Bellhouse recordings alone. The supplied bells play E4, G4, and B4 with different attacks and resonance. Keep replacements clearly distinguishable under the mission soundtrack. The room replay leaves 230 milliseconds between notes, so the tails can ring together.
 
 Use the [isolated preview](../README.md#preview-changes-with-a-separate-save). Turn Sound on in the plaza, enter a mission, and cross between an unoccupied lane and combat. Listen for seam clicks or changes in the beat. Test wind-up cues with the music active. The mix lowers the music around warnings and mission clears. Enemy poses and ground effects should still give the player time to react with Sound off.

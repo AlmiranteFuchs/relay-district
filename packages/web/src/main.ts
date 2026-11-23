@@ -8,7 +8,8 @@ import {
   DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW,
   type DispatchInvitation, type DispatchInviteRequest, type DispatchRecentCrew,
 } from "../../shared/src/dispatch.ts";
-import { LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
+import { BELLHOUSE_CALLS, LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers,
+  TERMINAL_READERS_COMPLETE, type BellhouseCue } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
 import { CompanionRoomPlay } from "./companion-room-play.ts";
@@ -129,6 +130,7 @@ function capture(state: Wire) {
       combo: entry.combo, step: entry.step, ack: entry.ack, moving: entry.moving, rank: entry.rank,
       rescued: entry.rescued, rescueTarget: entry.rescueTarget, rescueTicks: entry.rescueTicks,
       signalTag: entry.signalTag, bayFourTicket: entry.bayFourTicket, relayPennant: entry.relayPennant,
+      bellhouseSeal: entry.bellhouseSeal,
     });
   });
   return {
@@ -183,6 +185,11 @@ function attach(next: RelayRoom) {
   });
   next.onMessage("combat", (event: CombatEvent) => {
     if (room === next) { view.react(event); audio.sound(event.type); }
+  });
+  next.onMessage("bell", ({ note, source, x, z }: BellhouseCue) => {
+    if (room !== next) return;
+    view.react({ type: "observe", source, x, z });
+    audio.bellhouse(note);
   });
   next.onMessage("profile", (result: Profile) => {
     if (room !== next) return;
@@ -417,7 +424,9 @@ function drawPanel() {
       + profile.history.map((family) => FORMS[family].name).join(" → ") + ".</p>";
     body += '<div class="panel-grid">' + (Object.keys(LORE) as (keyof typeof LORE)[]).map((id) => {
       const entry = LORE[id];
-      return item(entry.title, escape(profile.lore.includes(id) ? entry.text : entry.hint));
+      const discovered = profile.lore.includes(id);
+      return item(entry.title, escape(discovered ? entry.text : entry.hint),
+        discovered && id === "bellhouse" ? button("Hear the bells", "bellhouse-reply") : "");
     }).join("") + "</div>";
   } else if (panel === "room-play") {
     title = "Signal Echo";
@@ -492,6 +501,7 @@ function signalObjective(world: WorldView) {
   if (world.mission === "pump") return world.stage === 3
     ? "Recall your companion and read the Pump Record."
     : "Recall your companion and use the Intake Control.";
+  if (world.mission === "bellhouse") return bellhouseObjective(world);
   if (world.mission === "bayrelay") return bayRelayObjective(world);
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
@@ -539,6 +549,14 @@ function pumpCombatObjective(world: WorldView) {
   return lane + " discharge. Stay clear of the next marked lane.";
 }
 
+function bellhouseObjective(world: WorldView) {
+  if (world.stage === 0) return "Clear the Bellhouse patrol.";
+  if (world.stage === 3) return "Recall your companion and read the Roster Desk.";
+  const answered = BELLHOUSE_CALLS.filter(({ readerBit }) => world.readerMask & readerBit).length;
+  if (answered === BELLHOUSE_CALLS.length) return "All three bells answered. Clear the remaining guard.";
+  return `Answer the bells with your companion recalled (${answered}/${BELLHOUSE_CALLS.length}).`;
+}
+
 function stationPrompt(world: WorldView, actor: ViewActor) {
   const point = nearestMarker(markers(), actor.x, actor.z);
   if (!point || !actor.hp) return "";
@@ -559,6 +577,10 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
     if (world.status !== "combat" && world.status !== "signal") return "";
     if (point.readerBit && (world.readerMask & point.readerBit)) return point.title + " • Linked";
   }
+  if (world.mission === "bellhouse") {
+    if (world.status !== "combat" && world.status !== "signal") return "";
+    if (point.readerBit && (world.readerMask & point.readerBit)) return point.title + " • Answered";
+  }
   if (world.mission === "viaduct" && world.stage === 1) {
     const seconds = readerSeconds(world);
     if (point.id === "viaduct-west" && seconds > 0) return "West Relay • Sending to East Relay";
@@ -566,7 +588,7 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
   }
   if (world.mission === "lift" && world.status !== "signal"
     && !(world.status === "combat" && world.readerMask === LIFT_PHASE.jammed)) return "";
-  const recall = world.mission === "archive" || world.mission === "bayrelay" || world.mission === "lift"
+  const recall = world.mission === "archive" || world.mission === "bayrelay" || world.mission === "lift" || world.mission === "bellhouse"
     || world.status === "signal" && (world.mission === "terminal"
     || world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct" || world.mission === "pump"
     || point.id === "register" || point.id === "signal" && world.mission === "return");
@@ -612,6 +634,7 @@ function updateHUD(actor?: ViewActor) {
           : "Hold the viaduct while the Signal Ledger powers up."
         : world.mission === "lift" ? liftCombatObjective(world)
         : world.mission === "pump" ? pumpCombatObjective(world)
+        : world.mission === "bellhouse" ? bellhouseObjective(world)
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: world.mission === "departure" ? "The Switchkeeper is staggered. A Cable Runner is coming from the west."
         : world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",
@@ -740,6 +763,13 @@ document.addEventListener("click", (event) => {
   if (action === "resume") { closePanel(); return; }
   if (action === "signal-echo" && panel === "room") { openPanel("room-play"); return; }
   if (action === "companion-room" && panel === "room-play") { openPanel("room"); return; }
+  if (action === "bellhouse-reply" && panel === "room" && profile.lore.includes("bellhouse")) {
+    audio.bellhouse();
+    const local = room && world?.actors.get(room.sessionId);
+    if (local && room) view.react({ type: "observe", source: room.sessionId, x: local.x, z: local.z });
+    notify(profile.companion + " remembers Spindle, Nacre, and Pith.");
+    return;
+  }
   if (action === "care") {
     room?.send("customize", { play: true });
     const remembersDeparture = profile.lore.includes("departure");

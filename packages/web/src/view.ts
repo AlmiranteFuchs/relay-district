@@ -14,12 +14,13 @@ import { DepartureScenery } from "./departure-view.ts";
 import { ViaductScenery } from "./viaduct-view.ts";
 import { LiftScenery } from "./lift-view.ts";
 import { PumpScenery } from "./pump-view.ts";
+import { BellhouseScenery } from "./bellhouse-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
   kind: string; hp: number; maxHp: number; energy: number; armed: boolean; connected: boolean;
   phase: string; age: number; duration: number; combo: number; step: number; ack: number; moving: boolean; rank: number;
-  rescued: boolean; rescueTarget: string; rescueTicks: number; signalTag: boolean; bayFourTicket: boolean; relayPennant: boolean;
+  rescued: boolean; rescueTarget: string; rescueTicks: number; signalTag: boolean; bayFourTicket: boolean; relayPennant: boolean; bellhouseSeal: boolean;
 }
 export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
@@ -34,6 +35,7 @@ interface Visual {
   signalTag?: TransformNode;
   bayFourTicket?: TransformNode;
   relayPennant?: TransformNode;
+  bellhouseSeal?: TransformNode;
   at: Vector3;
   shadow: Mesh;
   family: Family;
@@ -65,7 +67,7 @@ export class GameView {
   private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
-  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery | PumpScenery;
+  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery | PumpScenery | BellhouseScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -271,9 +273,12 @@ export class GameView {
     const id = world.kind + world.mission + world.stage + (world.status === "lobby" ? "lobby" : "");
     if (this.place === id) return;
     this.place = id;
-    this.scenery?.dispose();
-    this.missionScenery?.dispose();
-    this.missionScenery = undefined;
+    const keepBellhouse = world.mission === "bellhouse" && this.missionScenery instanceof BellhouseScenery;
+    if (!keepBellhouse) {
+      this.scenery?.dispose();
+      this.missionScenery?.dispose();
+      this.missionScenery = undefined;
+    }
     for (const label of this.labels.values()) label.remove();
     this.labels.clear();
     for (const marker of markers) {
@@ -281,7 +286,12 @@ export class GameView {
       label.textContent = marker.title;
       this.labels.set(marker.id, label);
     }
+    if (keepBellhouse) return;
     const root = this.scenery = new TransformNode("District architecture", this.scene);
+    if (world.mission === "bellhouse") {
+      this.missionScenery = new BellhouseScenery(this.scene, root);
+      return;
+    }
     if (world.mission === "pump") {
       this.missionScenery = new PumpScenery(this.scene, root, markers);
       return;
@@ -447,6 +457,7 @@ export class GameView {
     visual.signalTag = undefined;
     visual.bayFourTicket = undefined;
     visual.relayPennant = undefined;
+    visual.bellhouseSeal = undefined;
     if (visual.mothAnimation) {
       for (const name of ["torso", "head", "arm_near", "arm_far", "elbow_near", "elbow_far"]) {
         const joint = visual.model.parts.get(name);
@@ -548,6 +559,35 @@ export class GameView {
     this.mesh("Pennant tie", [.035, .218, .025], [-.226, .233, .01], braid, pennant).rotation.z = .06;
     this.mesh("Pennant clasp", [.071, .068, .049], [-.23, .347, .03], orange, pennant);
     return pennant;
+  }
+
+  private makeBellhouseSeal(parent: TransformNode) {
+    const seal = new TransformNode("Bellhouse three-stamp keepsake", this.scene);
+    seal.parent = parent;
+    seal.position.set(-.18, .24, -.44);
+    seal.rotation.z = -.23;
+    const brass = this.material("Bellhouse burnished brass", "#d8b46e", true);
+    const lacquer = this.material("Bellhouse plum lacquer", "#904c68", true);
+    const disc = (name: string, diameter: number, thickness: number, x: number, y: number, z: number, tint: StandardMaterial) => {
+      const mesh = MeshBuilder.CreateCylinder(name, { diameter, height: thickness, tessellation: 8 }, this.scene);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(x, y, z);
+      mesh.parent = seal; mesh.material = tint;
+    };
+    const eye = MeshBuilder.CreateTorus("Seal brass cord loop", { diameter: .122, thickness: .026, tessellation: 10 }, this.scene);
+    eye.rotation.x = Math.PI / 2;
+    eye.parent = seal; eye.material = brass;
+    const cord = MeshBuilder.CreateTube("Bellhouse seal braided cord", {
+      path: [new Vector3(0, .046, .007), new Vector3(-.026, .128, .089), new Vector3(-.053, .228, .17)],
+      radius: .019, tessellation: 5,
+    }, this.scene);
+    cord.parent = seal; cord.material = lacquer;
+    disc("Bellhouse seal stamped edge", .35, .055, 0, -.187, 0, brass);
+    disc("Bellhouse seal lacquer face", .29, .017, 0, -.187, -.034, lacquer);
+    for (const [x, y] of [[-.088, -.16], [0, -.225], [.088, -.16]]) {
+      disc("Bellhouse partner's stamp", .062, .014, x, y, -.048, brass);
+    }
+    return seal;
   }
 
   private project(label: HTMLDivElement, position: Vector3) {
@@ -847,6 +887,12 @@ export class GameView {
           visual.relayPennant.setEnabled(actor.relayPennant);
           visual.relayPennant.position.z = actor.facing < 0 ? .485 : -.485;
           visual.relayPennant.rotation.y = actor.facing < 0 ? Math.PI : 0;
+        }
+        if (actor.bellhouseSeal && visual.creature && !visual.bellhouseSeal) visual.bellhouseSeal = this.makeBellhouseSeal(visual.creature.node);
+        if (visual.bellhouseSeal) {
+          visual.bellhouseSeal.setEnabled(actor.bellhouseSeal);
+          visual.bellhouseSeal.position.z = actor.facing < 0 ? .44 : -.44;
+          visual.bellhouseSeal.rotation.y = actor.facing < 0 ? Math.PI : 0;
         }
         const target = new Vector3(actor.x, actor.y, actor.z);
         const factor = Vector3.DistanceSquared(target, visual.at) > 14 ? 1 : 1 - Math.exp(-dt * (id === self ? 34 : 13));

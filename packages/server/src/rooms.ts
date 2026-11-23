@@ -1,7 +1,7 @@
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import { matchMaker, Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
-  battleRank, BAY_FOUR_TICKET, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, RELAY_PENNANT, SIGNAL_TAG, TICK_RATE,
+  battleRank, BAY_FOUR_TICKET, BELLHOUSE_SEAL, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, RELAY_PENNANT, SIGNAL_TAG, TICK_RATE,
   type Action, type Family, type Mission, type Profile,
 } from "../../shared/src/content.ts";
 import { canRescueIn, hurtPlayer, isInvulnerable, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
@@ -11,8 +11,8 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
 import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
-  DEPARTURE_REINFORCEMENT_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, PUMP_TIMING,
-  routeMarkers, TERMINAL_READERS_COMPLETE,
+  BELLHOUSE_CALLS, BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA,
+  PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE, type BellhouseCue, type BellhouseNote,
   VIADUCT_RELAY_TICKS, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, CrewAssistState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
@@ -168,6 +168,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     actor.signalTag = profile.trinket === SIGNAL_TAG;
     actor.bayFourTicket = profile.trinket === BAY_FOUR_TICKET;
     actor.relayPennant = profile.trinket === RELAY_PENNANT;
+    actor.bellhouseSeal = profile.trinket === BELLHOUSE_SEAL;
     if (entry.connected) entry.client.send("profile", profile);
   }
 
@@ -406,6 +407,10 @@ const pumpWaves = [
   wave(["runner", .65, -2.4], ["skitter", 3.75, 2.4]),
   wave(["keeper", 5.35, 0]),
 ];
+const bellhouseWaves = [
+  wave(["skitter", -2.7, -1.8], ["skitter", 3.1, 2.6]),
+  wave(["guard", 6.8, -.85], ["runner", 1.85, 1]),
+];
 const nextPressureLane = [2, 0, 1];
 const bayRelayPatrol = wave(["runner", -2.85, -1.3], ["guard", 4.75, .9], ["runner", 7.25, -2.35]);
 const watchWaves = [
@@ -572,6 +577,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "pump") {
       this.spawn(pumpWaves[0]);
       this.story(JOBS.pump.title, "The 05:20 passed the pump intake before the gates closed. Clear the patrol and check the Intake Control with your partner.");
+    } else if (this.mission === "bellhouse") {
+      this.spawn(bellhouseWaves[0]);
+      this.story(JOBS.bellhouse.title, "The original pump roster is at the east desk. Ina is waiting for the old roll call before she and the other couriers add their signatures. Clear the hall so your partner can answer.");
     } else if (this.mission === "bayrelay") {
       this.spawn(bayRelayPatrol);
       this.story(JOBS.bayrelay.title, "Dispatch needs both call boxes checked. Use each box with a recalled partner. During combat, each call interrupts the patrol once. Clear the platform to sign off.");
@@ -747,6 +755,18 @@ export class MissionRoom extends GameRoom {
       }
       return;
     }
+    if (this.mission === "bellhouse") {
+      this.state.status = "signal";
+      if (this.state.stage === 0) {
+        this.state.stage = 1;
+        this.story("The shift calls", "Spindle, Nacre, and Pith each had their own bell. Bring your recalled partner to any call to start. The first reply will draw the guard into the hall.");
+      } else if (this.state.readerMask === BELLHOUSE_CALLS_COMPLETE) {
+        this.openBellhouseRoster();
+      } else {
+        this.story("The hall is quiet", "The guard is down. Answer the remaining calls with your recalled partner so the crews can sign the roster.");
+      }
+      return;
+    }
     if (this.mission === "bayrelay") {
       if (this.state.readerMask === BAY_RELAY_CALLS_COMPLETE) {
         this.finish();
@@ -855,6 +875,8 @@ export class MissionRoom extends GameRoom {
         this.spawn(pumpWaves[1]);
         this.story("Pressure rising", "The Switchkeeper is blocking the record. The pumps mark one floor lane before each discharge. Step across a painted boundary before it bursts.");
       }
+    } else if (this.mission === "bellhouse") {
+      this.interactBellhouse(entry, point);
     } else if (this.mission === "bayrelay") {
       this.interactBayRelay(entry, point);
     } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register"
@@ -863,13 +885,15 @@ export class MissionRoom extends GameRoom {
     } else client.send("notice", "The passage opens when the lane is safe.");
   }
 
-  private hearSignal(entry: Entry, point: Marker, armedNotice = "Recall your partner with Q and let it answer the reader.") {
+  private hearSignal(entry: Entry, point: Marker, armedNotice = "Recall your partner with Q and let it answer the reader.", note?: BellhouseNote) {
     const player = entry.player;
     if (player.armed || player.move?.kind === "arm" || player.move?.kind === "recall") {
       entry.client.send("notice", armedNotice);
       return false;
     }
-    this.broadcast("combat", { type: "observe", source: player.id, x: point.x, z: point.z });
+    const mark = { source: player.id, x: point.x, z: point.z };
+    if (note === undefined) this.broadcast("combat", { type: "observe", ...mark });
+    else this.broadcast("bell", { note, ...mark } satisfies BellhouseCue);
     return true;
   }
 
@@ -1110,6 +1134,38 @@ export class MissionRoom extends GameRoom {
       this.state.readerUntil = frame + PUMP_TIMING.gap;
       this.state.wave = nextPressureLane[laneIndex];
     }
+  }
+
+  private interactBellhouse(entry: Entry, point: Marker) {
+    if (this.state.status !== "signal" && this.state.status !== "combat") return;
+    const armedNotice = "Recall your partner with Q first.";
+    if (point.id === "bell-roster") {
+      if (this.state.status === "signal" && this.hearSignal(entry, point, armedNotice)) this.finish();
+      return;
+    }
+    const call = BELLHOUSE_CALLS.find(({ id }) => id === point.id);
+    if (!call) return;
+    if (this.state.readerMask & call.readerBit) {
+      entry.client.send("notice", call.title + " has answered.");
+      return;
+    }
+    if (!this.hearSignal(entry, point, armedNotice, call.note)) return;
+    this.state.readerMask |= call.readerBit;
+    if (this.state.stage === 1) {
+      this.state.stage = 2;
+      this.spawn(bellhouseWaves[1]);
+      this.story("Guard approaching", "A Gateback and a Cable Runner heard the bell. You can answer the remaining calls while a crewmate holds the guard or once the hall is clear.");
+    } else if (this.state.status === "signal" && this.state.readerMask === BELLHOUSE_CALLS_COMPLETE) {
+      this.openBellhouseRoster();
+    } else {
+      this.broadcast("notice", call.title + " answered.");
+    }
+  }
+
+  private openBellhouseRoster() {
+    this.state.stage = 3;
+    this.state.status = "signal";
+    this.story("The signed roster", "The hall is clear and all three bells have answered. Ina and the other couriers have signed at the east desk. Bring your recalled partner to read the names and take a seal home.");
   }
 
   private finish() {

@@ -1,4 +1,6 @@
-const standaloneCues = ["plaza", "arm", "hit", "swing", "windup", "dodge", "observe", "clear", "departure"] as const;
+export const BELLHOUSE_CUES = ["bellhouse-low", "bellhouse-mid", "bellhouse-high"] as const;
+
+const standaloneCues = ["plaza", "arm", "hit", "swing", "windup", "dodge", "observe", "clear", "departure", ...BELLHOUSE_CUES] as const;
 type StandaloneCue = typeof standaloneCues[number];
 type AudioCue = StandaloneCue | "lane" | "fight";
 

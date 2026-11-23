@@ -64,6 +64,17 @@ const pumpMarkers: Marker[][] = [
   [], [{ id: "pump-intake", x: -5.15, z: 2.65, title: "Intake Control" }],
   [], [{ id: "pump-record", x: 7.85, z: 2.62, title: "Pump Record" }],
 ];
+export type BellhouseNote = 0 | 1 | 2;
+export interface BellhouseCue { note: BellhouseNote; source: string; x: number; z: number }
+export const BELLHOUSE_CALLS = [
+  { id: "bell-spindle", x: -6.5, z: 2.75, title: "Spindle Call", readerBit: 0b001, note: 0 },
+  { id: "bell-nacre", x: .15, z: -2.65, title: "Nacre Call", readerBit: 0b010, note: 1 },
+  { id: "bell-pith", x: 6.25, z: 2.4, title: "Pith Call", readerBit: 0b100, note: 2 },
+] satisfies (Marker & { readerBit: number; note: BellhouseNote })[];
+export const BELLHOUSE_CALLS_COMPLETE = 0b111;
+const bellhouseMarkers: Marker[][] = [
+  [], BELLHOUSE_CALLS, BELLHOUSE_CALLS, [{ id: "bell-roster", x: 8.45, z: .25, title: "Roster Desk" }],
+];
 export const BAY_RELAY_CALLS_COMPLETE = 0b11;
 export const BAY_RELAY_STAGGER_TICKS = 40;
 const bayRelayMarkers: Marker[] = [
@@ -81,6 +92,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "viaduct") return viaductMarkers[stage] ?? [];
   if (mission === "lift") return liftMarkers[stage] ?? [];
   if (mission === "pump") return pumpMarkers[stage] ?? [];
+  if (mission === "bellhouse") return bellhouseMarkers[stage] ?? [];
   if (mission === "bayrelay") return bayRelayMarkers;
   if (mission !== "chapter") return [];
   return stage === 0
