@@ -1,6 +1,6 @@
 # Relay District
 
-Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore six story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
+Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore seven story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
 
 ## Run the game
 
@@ -36,6 +36,8 @@ After Return Junction, take **East Terminal** from Dispatch. Recall your compani
 After East Terminal, take **Tidegate Signal Archive** from Dispatch. Clear the entrance and use the console with your companion recalled. The near and far channels alternate. Scan each bank while its signal is live, then defend the archive and recover the recording for the party journal.
 
 After Tidegate, take **Dead Line Exchange**. Step off the Cable Runner’s marked attack line and strike during recovery. Recall your companion at the Transfer Control, cover both ends of the lane while it powers up, then read the Crew Log for the next departure.
+
+Clear Dead Line Exchange to unlock **First Departure**. Set the Departure Signal with your companion recalled. Keep an eye on the west approach when the Switchkeeper staggers, then use the Boarding Reader after the fight. The first arc closes with a new journal memory and the **Bay Four Ticket** keepsake. Back at the companion room, Play together lets your partner repeat the departure rhythm.
 
 Clear East Terminal to unlock **Terminal Watch** in Dispatch. This repeatable contract has two patrols and awards 28 battle XP per clear. Keep the whole party on its feet through both patrols to unlock the **Signal Tag**, which you can equip in the companion room. A rescue can save the run after a knockdown.
 

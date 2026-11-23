@@ -109,7 +109,7 @@ export class GameAudio {
     bed.setTargetAtTime(bedLevel, this.resumeBedAt, .21);
   }
 
-  sound(type: CombatEvent["type"]) {
+  sound(type: CombatEvent["type"] | "departure") {
     const audio = this.context;
     const clip = this.buffers.get(type === "revive" ? "observe" : type);
     if (!audio || !this.enabled || !clip || !this.effects) return;
@@ -119,6 +119,7 @@ export class GameAudio {
     }
     if (type === "windup") this.leaveRoomForCue(audio.currentTime, .26, .54);
     if (type === "clear") this.leaveRoomForCue(audio.currentTime, 1.05, .42);
+    if (type === "departure") this.leaveRoomForCue(audio.currentTime, .86, .52);
     const source = audio.createBufferSource();
     const channel = audio.createGain();
     source.buffer = clip; channel.gain.value = type === "windup" ? .67 : type === "hit" ? .55 : .47;

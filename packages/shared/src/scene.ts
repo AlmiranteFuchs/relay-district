@@ -31,6 +31,12 @@ const exchangeMarkers: Marker[][] = [
   [],
   [{ id: "exchange-log", x: 8.35, z: 2.6, title: "Crew Log" }],
 ];
+export const DEPARTURE_REINFORCEMENT_TICKS = 2.4 * TICK_RATE;
+const departureMarkers: Marker[][] = [
+  [{ id: "departure-signal", x: 6.65, z: 2.8, title: "Departure Signal" }],
+  [],
+  [{ id: "departure-boarding", x: 8.2, z: 2.7, title: "Boarding Reader" }],
+];
 
 export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "night") return [{ id: "register", x: 8.25, z: 2.25, title: "Return Register" }];
@@ -38,6 +44,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "terminal") return terminalMarkers;
   if (mission === "archive") return archiveMarkers[stage] ?? [];
   if (mission === "exchange") return exchangeMarkers[stage] ?? [];
+  if (mission === "departure") return departureMarkers[stage] ?? [];
   if (mission !== "chapter") return [];
   return stage === 0
     ? [

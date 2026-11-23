@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../packages/server/src/store.ts";
-import { SIGNAL_TAG, TERMINAL_WATCH_XP } from "../packages/shared/src/content.ts";
+import { BAY_FOUR_TICKET, SIGNAL_TAG, TERMINAL_WATCH_XP } from "../packages/shared/src/content.ts";
 
 test("one companion survives chapter, mastery, morph, and a database restart", () => {
   const dir = mkdtempSync(join(tmpdir(), "relay-test-"));
@@ -74,13 +74,21 @@ test("one companion survives chapter, mastery, morph, and a database restart", (
     assert.equal(exchange.clears.at(-1), "exchange");
     store.reward([account.id], "exchange-a", "exchange");
     assert.deepEqual(store.profile(account.id), exchange);
+    assert.equal(store.customize(account.id, { trinket: BAY_FOUR_TICKET }).trinket, SIGNAL_TAG);
+    const departure = store.reward([account.id], "departure-a", "departure").get(account.id)!;
+    assert.equal(departure.lore.at(-1), "departure");
+    assert.equal(departure.clears.at(-1), "departure");
+    assert.equal(departure.trinket, SIGNAL_TAG);
+    store.reward([account.id], "departure-a", "departure");
+    assert.deepEqual(store.profile(account.id), departure);
+    assert.equal(store.customize(account.id, { trinket: BAY_FOUR_TICKET }).trinket, BAY_FOUR_TICKET);
     store.close();
     store = new Store(file);
     assert.equal(store.session(account.token)?.profile.companion, "Pebble");
     assert.deepEqual(store.session(account.token)?.profile.history, ["moth", "brick", "moth"]);
-    assert.deepEqual(store.session(account.token)?.profile.lore, ["log", "register", "turnout", "manifest", "archive", "exchange"]);
+    assert.deepEqual(store.session(account.token)?.profile.lore, ["log", "register", "turnout", "manifest", "archive", "exchange", "departure"]);
     assert.ok(store.session(account.token)?.profile.clears.includes("terminal"));
-    assert.equal(store.session(account.token)?.profile.trinket, SIGNAL_TAG);
+    assert.equal(store.session(account.token)?.profile.trinket, BAY_FOUR_TICKET);
     assert.equal(store.session(account.token)?.profile.watchCommendation, true);
     assert.equal(store.session("x".repeat(43)), null);
   } finally {

@@ -1,12 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
-  battleRank, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, SIGNAL_TAG, TICK_RATE,
+  battleRank, BAY_FOUR_TICKET, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, SIGNAL_TAG, TICK_RATE,
   type Action, type Family, type Mission, type Profile,
 } from "../../shared/src/content.ts";
 import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
-import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, nearestMarker, PLAZA, routeMarkers,
+import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers,
   TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
@@ -115,7 +115,9 @@ export class GameRoom extends Room<{ state: GameState }> {
     entry.player.companion = profile.companion;
     entry.player.rank = battleRank(profile.battleXp);
     entry.player.mastered = profile.mastery.includes(entry.player.family);
-    this.state.actors.get(entry.player.id)!.signalTag = profile.trinket === SIGNAL_TAG;
+    const actor = this.state.actors.get(entry.player.id)!;
+    actor.signalTag = profile.trinket === SIGNAL_TAG;
+    actor.bayFourTicket = profile.trinket === BAY_FOUR_TICKET;
     if (entry.connected) entry.client.send("profile", profile);
   }
 
@@ -148,10 +150,11 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.events.length = 0;
     const safe = this.state.status !== "combat" || ![...this.enemies.values()].some((enemy) => enemy.hp && enemy.kind !== "dummy");
     const frozen = this.state.status === "failed" || this.state.status === "complete";
+    const attackTargets = this.state.status === "interlude" ? [] : this.enemies;
     for (const entry of this.players.values()) {
       if (!frozen && entry.connected) {
         const input = this.state.frame - entry.at > 24 ? { x: 0, z: 0 } : entry.input;
-        stepPlayer(entry.player, input, entry.input.action, this.state.frame, this.enemies.values(), this.events, safe);
+        stepPlayer(entry.player, input, entry.input.action, this.state.frame, attackTargets.values(), this.events, safe);
         entry.ack = entry.input.seq;
       }
     }
@@ -254,6 +257,11 @@ const exchangeWaves = [
   wave(["runner", 1.2, -1.25]),
   wave(["guard", 8.4, -.7], ["runner", -3.8, -.85]),
 ];
+const departureWaves = [
+  wave(["skitter", .2, -2], ["guard", 5.1, 1.85]),
+  wave(["keeper", 8.35, -.85]),
+  wave(["runner", -5.8, -2.15]),
+];
 const watchWaves = [
   wave(["skitter", -2.5, 2.1], ["guard", 3.8, -1.7]),
   wave(["keeper", 4.5, -.9], ["skitter", -5.8, 2.9]),
@@ -351,6 +359,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "exchange") {
       this.spawn(exchangeWaves[0]);
       this.story(JOBS.exchange.title, "Mara's recording leads to the exchange under the river pumps. A Cable Runner is hunting in the entrance. Step across the lane when it coils, then strike while it recovers.");
+    } else if (this.mission === "departure") {
+      this.spawn(departureWaves[0]);
+      this.story(JOBS.departure.title, "Bay 4 has been waiting for both halves of the fare. Clear the concourse and bring your recalled partner to the departure signal.");
     } else if (this.mission === "watch") {
       this.spawn(watchWaves[0]);
       this.story(JOBS.watch.title, "Dispatch needs the night crew to keep this platform open. Clear both patrols. If everyone stays on their feet, take a Signal Tag home for your partner.");
@@ -374,6 +385,10 @@ export class MissionRoom extends GameRoom {
 
   private spawn(entries: Spawn[]) {
     this.clearEnemies();
+    this.joinFight(entries);
+  }
+
+  private joinFight(entries: Spawn[]) {
     for (const { kind, x, z } of entries) {
       const id = "enemy-" + ++this.serial;
       const enemy = makeEnemy(id, kind, x, z, this.players.size);
@@ -401,7 +416,11 @@ export class MissionRoom extends GameRoom {
     }
     if (this.state.status === "interlude" && this.waveReady && this.state.frame >= this.waveReady) {
       this.waveReady = 0;
-      this.spawn(this.mission === "watch" ? watchWaves[1] : chapterWaves[1]);
+      if (this.mission === "departure") {
+        this.joinFight(departureWaves[2]);
+      } else {
+        this.spawn(this.mission === "watch" ? watchWaves[1] : chapterWaves[1]);
+      }
       return;
     }
     if (this.state.status !== "combat") return;
@@ -409,6 +428,21 @@ export class MissionRoom extends GameRoom {
       this.state.status = "failed";
       this.story("Signal lost", "The party is down. Use Mission to retry the job.");
       return;
+    }
+    if (this.mission === "departure" && this.state.stage === 1 && this.state.wave === 0) {
+      const keeper = [...this.enemies.values()].find((enemy) => enemy.kind === "keeper");
+      if (keeper && keeper.hp * 2 <= keeper.maxHp) {
+        this.state.status = "interlude";
+        this.state.wave = 1;
+        this.waveReady = this.state.frame + DEPARTURE_REINFORCEMENT_TICKS;
+        if (keeper.hp > 0) {
+          keeper.phase = "recover";
+          keeper.ticks = 30;
+          keeper.target = "";
+        }
+        this.story("West duct opening", "The Switchkeeper braces against the brake handle. A Cable Runner is approaching through the west duct. Move off the west lane and get ready.");
+        return;
+      }
     }
     if (!this.enemies.size || [...this.enemies.values()].some((enemy) => enemy.hp > 0)) return;
     if (this.mission === "night") {
@@ -447,6 +481,16 @@ export class MissionRoom extends GameRoom {
       } else {
         this.state.stage = 2;
         this.story("Crew desk clear", "The transfer gate is holding. Recall your partner at the crew desk and recover the log.");
+      }
+      return;
+    }
+    if (this.mission === "departure") {
+      this.state.status = "signal";
+      if (this.state.stage === 0) {
+        this.story("Departure signal clear", "The lamp is flashing the same rhythm as the keepsake. Recall your partner and let it answer the departure signal.");
+      } else {
+        this.state.stage = 2;
+        this.story("Boarding reader ready", "The platform is clear. Recall your partner and match both halves of the fare at the boarding reader.");
       }
       return;
     }
@@ -531,7 +575,8 @@ export class MissionRoom extends GameRoom {
       this.interactTerminal(entry, point);
     } else if (this.mission === "archive") {
       this.interactArchive(entry, point);
-    } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register" || this.mission === "exchange")) {
+    } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register"
+      || this.mission === "exchange" || this.mission === "departure")) {
       this.interactSignal(entry, point);
     } else client.send("notice", "The passage opens when the lane is safe.");
   }
@@ -578,6 +623,10 @@ export class MissionRoom extends GameRoom {
       this.state.stage = 1;
       this.spawn(exchangeWaves[1]);
       this.story("Transfer accepted", "Your partner sends the pump rhythm down the line. A Gateback is moving in from the gate. Stay close and watch for a Cable Runner hunting anyone who has recalled.");
+    } else if (point.id === "departure-signal") {
+      this.state.stage = 1;
+      this.spawn(departureWaves[1]);
+      this.story("Bay 4 signalled", "Your partner reaches the train's reader. The Switchkeeper is still holding the platform brake. Arm your partner and drive it clear.");
     } else this.finish();
   }
 

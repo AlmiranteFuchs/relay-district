@@ -7,9 +7,10 @@ test("mission score replacement supplies both aligned stems and the beat interva
     cues: { plaza: "/audio/courtyard.wav" },
     mission: { lane: "/audio/terminal.wav", fight: "/audio/terminal-fight.wav", bpm: 120 },
   });
-  assert.equal(result.buffers.size, 10);
+  assert.equal(result.buffers.size, 11);
   assert.equal(result.buffers.get("plaza")?.path, "/audio/courtyard.wav");
   assert.equal(result.buffers.get("windup")?.path, "/audio/windup.wav");
+  assert.equal(result.buffers.get("departure")?.path, "/audio/departure.wav");
   assert.equal(result.buffers.get("lane")?.path, "/audio/terminal.wav");
   assert.equal(result.buffers.get("fight")?.path, "/audio/terminal-fight.wav");
   assert.equal(result.missionBeat, .5);
@@ -24,7 +25,7 @@ test("unaligned score stems fall back as a pair and a failed cue falls back inde
     cues: { hit: "/audio/unavailable.wav", swing: "/audio/coil.wav" },
     mission: { lane: "/audio/new-lane.wav", fight: "/audio/early.wav", bpm: 120 },
   });
-  assert.equal(result.buffers.size, 10);
+  assert.equal(result.buffers.size, 11);
   assert.equal(result.buffers.get("hit")?.path, "/audio/hit.wav");
   assert.equal(result.buffers.get("swing")?.path, "/audio/coil.wav");
   assert.equal(result.buffers.get("lane")?.path, "/audio/lane.wav");

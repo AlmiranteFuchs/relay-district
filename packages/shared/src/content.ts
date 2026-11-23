@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -132,6 +132,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "Mara's crew kept the route alive on current from the river pumps after the city cut the feed. Their tally shows all twelve partners made it through the exchange. Your partner taps the relay rhythm in the margin. The final entry lists Bay 4 at 05:20 and orders the crew to hold the first departure for a courier carrying both halves of a fare.",
     hint: "Recover the crew log past the transfer control at Dead Line Exchange",
   },
+  departure: {
+    title: "Bay 4 departure record · 05:20",
+    text: "The boarding reader restores the twelve partner records and matches them to the twelve passengers who made it home. Mara's crew got every partner through the return route. Your partner fits both halves of the fare together and answers the chime. The signal turns green at 05:20. As the train leaves Bay 4, the reader prints a ticket marked DEPARTED.",
+    hint: "Read the boarding record at Bay 4 after clearing First Departure",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -154,6 +159,10 @@ export const JOBS: Record<Mission, {
   exchange: {
     title: "Dead Line Exchange", description: "Follow Mara's recording to the transfer desk and trace the crew that kept the return route running.",
     clearLore: "exchange", requiresChapter: true, prerequisite: "archive",
+  },
+  departure: {
+    title: "First Departure", description: "Take both halves of the fare to Bay 4 and clear the platform for the 05:20 train.",
+    clearLore: "departure", requiresChapter: true, prerequisite: "exchange",
   },
   watch: {
     title: "Terminal Watch",
@@ -189,11 +198,15 @@ export function battleRank(xp: number): number {
 
 export const TRINKETS = ["Fare token", "Copper ribbon", "Blue bell"];
 export const SIGNAL_TAG = "Signal Tag";
+export const BAY_FOUR_TICKET = "Bay Four Ticket";
 export const TERMINAL_WATCH_XP = 28;
 export const ROOM_THEMES = ["Station blue", "Amber window", "Moss glass"];
 
 export function availableTrinkets(profile: Profile): string[] {
-  return profile.watchCommendation ? [...TRINKETS, SIGNAL_TAG] : TRINKETS;
+  const keepsakes = [...TRINKETS];
+  if (profile.watchCommendation) keepsakes.push(SIGNAL_TAG);
+  if (profile.clears.includes("departure")) keepsakes.push(BAY_FOUR_TICKET);
+  return keepsakes;
 }
 
 export function isFamily(value: unknown): value is Family {

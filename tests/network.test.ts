@@ -6,9 +6,9 @@ import { matchMaker } from "@colyseus/core";
 import { runServer } from "../packages/server/src/http.ts";
 import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
-import type { Action, Family, Mission, Profile } from "../packages/shared/src/content.ts";
+import { BAY_FOUR_TICKET, type Action, type Family, type Mission, type Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
-import { ARCHIVE_CHANNELS_COMPLETE, routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
+import { ARCHIVE_CHANNELS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -656,6 +656,111 @@ test("Dead Line Exchange teaches the Cable Runner and records the crew log for t
     first.send("begin");
     await until("replay returns to the Cable Runner entrance", () => stage(0, "combat"));
     assert.deepEqual(enemies().map(([, actor]) => actor.kind), ["runner"]);
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("First Departure keeps the Switchkeeper across its reinforcement phase and saves the Bay Four Ticket", { timeout: 85000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      for (const mission of ["chapter", "night", "return", "terminal", "archive"] as const) server.store.reward([id], mission, mission);
+      if (account !== guest) server.store.reward([id], "exchange", "exchange");
+    }
+    await assert.rejects(guest.sdk.create("mission", { mission: "departure" }), /Clear Dead Line Exchange/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "departure" }) as Socket);
+    rooms.push(first);
+    await assert.rejects(guest.sdk.joinById(first.roomId), /Clear Dead Line Exchange/);
+    const other = connectHandlers(await beta.sdk.joinById(first.roomId) as Socket);
+    rooms.push(other);
+    await Promise.all([local(first), local(other)]);
+
+    const a = new TestCourier(first), b = new TestCourier(other), couriers = [a, b];
+    const [signal] = routeMarkers("departure", 0);
+    const [boarding] = routeMarkers("departure", 2);
+    const stage = (stage: number, status: string) => [first, other].every((room) => room.state.stage === stage && room.state.status === status);
+    const enemies = () => [...first.state.actors.entries()].filter(([, actor]) => actor.kind !== "player");
+    const readWithRecall = async (courier: TestCourier) => {
+      await until("reader operator stands idle", () => courier.me.phase === "idle");
+      if (courier.me.armed) courier.send(0, 0, "morph");
+      await until("operator recalls their partner", () => !courier.me.armed && courier.me.phase === "idle");
+      courier.room.send("interact");
+    };
+
+    first.send("begin");
+    await until("both clients enter Bay 4", () => stage(0, "combat"));
+    assert.deepEqual(enemies().map(([, actor]) => actor.kind).sort(), ["guard", "skitter"]);
+    await fight(couriers, "signal", 24000);
+    const operator = a.me.hp > 0 ? a : b;
+    await operator.go(signal.x, signal.z);
+    const healthBeforeBoss = couriers.map((courier) => courier.me.hp);
+    await readWithRecall(operator);
+    await until("the Switchkeeper defends Bay 4", () => stage(1, "combat"));
+    const [keeperId, keeper] = enemies()[0];
+    assert.equal(keeper.kind, "keeper");
+    assert.equal(enemies().length, 1);
+    assert.deepEqual(couriers.map((courier) => courier.me.hp), healthBeforeBoss);
+
+    await fight(couriers, "interlude", 26000);
+    await until("both clients see the warning phase", () => stage(1, "interlude"));
+    const interludeFrame = first.state.frame;
+    const pausedHealth = couriers.map((courier) => courier.me.hp);
+    const bossHealth = keeper.hp;
+    assert.ok(bossHealth > 0 && bossHealth * 2 <= keeper.maxHp);
+    assert.deepEqual(enemies().map(([id]) => id), [keeperId]);
+    for (let n = 0; n < 18; n++) {
+      for (const courier of couriers) courier.attack();
+      await delay(34);
+    }
+    for (const courier of couriers) courier.send(0, 0);
+    assert.equal(keeper.hp, bossHealth);
+    assert.deepEqual(couriers.map((courier) => courier.me.hp), pausedHealth);
+    await until("the Cable Runner joins after the warning", () => stage(1, "combat") && first.state.wave === 1);
+    assert.ok(first.state.frame - interludeFrame >= DEPARTURE_REINFORCEMENT_TICKS - 8);
+    assert.deepEqual(enemies().map(([, actor]) => actor.kind).sort(), ["keeper", "runner"]);
+    assert.equal(first.state.actors.get(keeperId)?.hp, bossHealth);
+    assert.equal(other.state.actors.get(keeperId)?.hp, bossHealth);
+    assert.deepEqual(couriers.map((courier) => courier.me.hp), pausedHealth);
+
+    await fight(couriers, "signal", 28000);
+    await until("both clients can access the boarding reader", () => stage(2, "signal"));
+    for (const account of [alpha, beta]) assert.equal((await account.profile()).lore.includes("departure"), false);
+    const plaza = connectHandlers(await alpha.sdk.joinOrCreate("plaza") as Socket);
+    rooms.push(plaza);
+    await local(plaza);
+    let updated: Profile | undefined;
+    plaza.onMessage("profile", (profile: Profile) => { updated = profile; });
+    const equipTicket = async () => {
+      updated = undefined;
+      plaza.send("customize", { trinket: BAY_FOUR_TICKET });
+      return until("the companion room replies to the ticket choice", () => updated);
+    };
+    assert.equal((await equipTicket()).trinket, "Fare token");
+    assert.equal(plaza.state.actors.get(plaza.sessionId)?.bayFourTicket, false);
+
+    const reader = a.me.hp > 0 ? a : b;
+    await reader.go(boarding.x, boarding.z);
+    await readWithRecall(reader);
+    reader.room.send("interact");
+    await until("the whole party clears First Departure", () => stage(2, "complete"));
+    for (const account of [alpha, beta]) {
+      const profile = await account.profile();
+      assert.deepEqual(profile.clears, ["chapter", "night", "return", "terminal", "archive", "exchange", "departure"]);
+      assert.deepEqual(profile.lore, ["register", "turnout", "manifest", "archive", "exchange", "departure"]);
+      assert.equal(profile.battleXp, 352);
+      assert.equal(profile.bond, 40);
+      assert.equal(profile.trinket, "Fare token");
+    }
+    assert.equal((await equipTicket()).trinket, BAY_FOUR_TICKET);
+    await until("the equipped ticket reaches actor state", () => plaza.state.actors.get(plaza.sessionId)?.bayFourTicket);
+    first.send("begin");
+    await until("replay resets the approach and reinforcement", () => stage(0, "combat") && [first, other].every((room) => room.state.wave === 0));
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

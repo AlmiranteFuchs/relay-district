@@ -1,4 +1,4 @@
-const standaloneCues = ["plaza", "arm", "hit", "swing", "windup", "dodge", "observe", "clear"] as const;
+const standaloneCues = ["plaza", "arm", "hit", "swing", "windup", "dodge", "observe", "clear", "departure"] as const;
 type StandaloneCue = typeof standaloneCues[number];
 type AudioCue = StandaloneCue | "lane" | "fight";
 

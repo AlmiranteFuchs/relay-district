@@ -51,8 +51,22 @@ function save(name, samples) {
   writeFileSync(join(out, name + ".wav"), bytes);
 }
 
-renderScore(out);
 const clip = (name, duration, author) => { const sound = buffer(duration); author(sound); save(name, sound); };
+clip("departure", 1.04, (sound) => {
+  for (const [start, note] of [[0, 76], [.24, 71]]) {
+    const f = tau * freq(note);
+    const bell = (t) => Math.sin(f * t) * Math.exp(-t * 5.6)
+      + .36 * Math.sin(f * 2.76 * t) * Math.exp(-t * 13)
+      + .16 * Math.sin(f * 5.41 * t) * Math.exp(-t * 27);
+    voice(sound, start, .65, .33, bell);
+    voice(sound, start + .041, .51, .074, bell);
+    voice(sound, start + .113, .42, .037, bell);
+  }
+  voice(sound, 0, .06, .052, (t) => (Math.sin(tau * 349 * t) + .5 * Math.sin(tau * 1027 * t)) * Math.exp(-t * 66));
+});
+if (process.argv.includes("--departure-only")) process.exit(0);
+
+renderScore(out);
 clip("arm", .64, (sound) => { tone(sound, 0, .22, 64, .24); tone(sound, .15, .4, 76, .21); drum(sound, .31, "snare", .048); });
 clip("hit", .26, (sound) => { drum(sound, 0, "kick", .75); drum(sound, .021, "snare", .46); });
 clip("swing", .26, (sound) => {

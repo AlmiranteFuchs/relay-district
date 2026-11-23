@@ -10,12 +10,13 @@ import { instantiateActorModel, loadModelAsset, type ActorModel, type ModelAsset
 import { MODEL_SLOTS, type ModelSlot } from "./model-replacements.ts";
 import { ArchiveScenery } from "./archive-view.ts";
 import { ExchangeScenery } from "./exchange-view.ts";
+import { DepartureScenery } from "./departure-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
   kind: string; hp: number; maxHp: number; energy: number; armed: boolean; connected: boolean;
   phase: string; age: number; duration: number; combo: number; step: number; ack: number; moving: boolean; rank: number;
-  rescued: boolean; rescueTarget: string; rescueTicks: number; signalTag: boolean;
+  rescued: boolean; rescueTarget: string; rescueTicks: number; signalTag: boolean; bayFourTicket: boolean;
 }
 export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
@@ -28,6 +29,7 @@ interface Visual {
   weapon?: ActorModel;
   mothAnimation?: MothAnimation;
   signalTag?: TransformNode;
+  bayFourTicket?: TransformNode;
   at: Vector3;
   shadow: Mesh;
   family: Family;
@@ -56,7 +58,7 @@ export class GameView {
   private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
-  private missionScenery?: ArchiveScenery | ExchangeScenery;
+  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -273,6 +275,10 @@ export class GameView {
       this.labels.set(marker.id, label);
     }
     const root = this.scenery = new TransformNode("District architecture", this.scene);
+    if (world.mission === "departure") {
+      this.missionScenery = new DepartureScenery(this.scene, root, markers);
+      return;
+    }
     if (world.mission === "archive" || world.mission === "exchange") {
       this.missionScenery = world.mission === "archive" ? new ArchiveScenery(this.scene, root, world.stage, markers)
         : new ExchangeScenery(this.scene, root, world.stage, markers);
@@ -420,6 +426,7 @@ export class GameView {
     visual.creature?.dispose();
     visual.weapon?.dispose();
     visual.signalTag = undefined;
+    visual.bayFourTicket = undefined;
     if (visual.mothAnimation) {
       for (const name of ["torso", "head", "arm_near", "arm_far", "elbow_near", "elbow_far"]) {
         const joint = visual.model.parts.get(name);
@@ -453,6 +460,43 @@ export class GameView {
     this.mesh("Signal Tag contact", [.14, .027, .02], [0, -.12, -.028], brass, tag);
     this.mesh("Signal Tag contact", [.085, .027, .02], [0, -.169, -.028], brass, tag);
     return tag;
+  }
+
+  private makeBayFourTicket(parent: TransformNode) {
+    const ticket = new TransformNode("Bay 4 punched ticket keepsake", this.scene);
+    ticket.parent = parent;
+    ticket.position.set(-.12, -.11, -.46);
+    ticket.rotation.set(.22, 0, -.28);
+    const card = this.material("Bay 4 pale card", "#e7d8ad");
+    card.emissiveColor.set(.13, .1, .046);
+    const ink = this.material("Bay 4 transfer print", "#638982");
+    const outline = [[-.17, .13], [.167, .13], [.193, .10], [.193, -.109], [.157, -.14],
+      [-.164, -.14], [-.192, -.11], [-.192, .102]];
+    const punched = [.095, .051];
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (const [x, y] of outline) {
+      const dx = x - punched[0], dy = y - punched[1];
+      const cut = .046 / Math.hypot(dx, dy);
+      for (const z of [-.014, .014]) positions.push(x, y, z, punched[0] + dx * cut, punched[1] + dy * cut, z);
+    }
+    for (let point = 0; point < outline.length; point++) {
+      const a = point * 4, b = ((point + 1) % outline.length) * 4;
+      indices.push(a, a + 1, b, b, a + 1, b + 1, a + 2, b + 2, a + 3, b + 2, b + 3, a + 3,
+        a, b, a + 2, b, b + 2, a + 2, a + 1, a + 3, b + 1, b + 1, a + 3, b + 3);
+    }
+    const normals: number[] = [];
+    VertexData.ComputeNormals(positions, indices, normals);
+    const data = new VertexData();
+    data.positions = positions; data.indices = indices; data.normals = normals;
+    const cardMesh = new Mesh("Clipped fare ticket with punched hole", this.scene);
+    data.applyToMesh(cardMesh);
+    cardMesh.parent = ticket; cardMesh.material = card;
+    for (const z of [-.016, .016]) {
+      this.mesh("Bay 4 printed stripe", [.31, .043, .004], [0, -.084, z], ink, ticket);
+      this.mesh("Bay 4 printed fare code", [.092, .021, .004], [-.088, .052, z], ink, ticket);
+    }
+    return ticket;
   }
 
   private project(label: HTMLDivElement, position: Vector3) {
@@ -734,6 +778,12 @@ export class GameView {
         if (actor.kind === "player" && visual.family !== actor.family) this.setFamily(visual, actor.family);
         if (actor.signalTag && visual.creature && !visual.signalTag) visual.signalTag = this.makeSignalTag(visual.creature.node);
         visual.signalTag?.setEnabled(actor.signalTag);
+        if (actor.bayFourTicket && visual.creature && !visual.bayFourTicket) visual.bayFourTicket = this.makeBayFourTicket(visual.creature.node);
+        if (visual.bayFourTicket) {
+          visual.bayFourTicket.setEnabled(actor.bayFourTicket);
+          visual.bayFourTicket.position.z = actor.facing < 0 ? .46 : -.46;
+          visual.bayFourTicket.rotation.y = actor.facing < 0 ? Math.PI : 0;
+        }
         const target = new Vector3(actor.x, actor.y, actor.z);
         const factor = Vector3.DistanceSquared(target, visual.at) > 14 ? 1 : 1 - Math.exp(-dt * (id === self ? 34 : 13));
         Vector3.LerpToRef(visual.at, target, factor, visual.at);

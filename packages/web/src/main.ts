@@ -113,7 +113,8 @@ function capture(state: Wire) {
       family: entry.family, kind: entry.kind, hp: entry.hp, maxHp: entry.maxHp, energy: entry.energy,
       armed: entry.armed, connected: entry.connected, phase: entry.phase, age: entry.age, duration: entry.duration,
       combo: entry.combo, step: entry.step, ack: entry.ack, moving: entry.moving, rank: entry.rank,
-      rescued: entry.rescued, rescueTarget: entry.rescueTarget, rescueTicks: entry.rescueTicks, signalTag: entry.signalTag,
+      rescued: entry.rescued, rescueTarget: entry.rescueTarget, rescueTicks: entry.rescueTicks,
+      signalTag: entry.signalTag, bayFourTicket: entry.bayFourTicket,
     });
   });
   return {
@@ -311,6 +312,9 @@ function signalObjective(world: WorldView) {
   if (world.mission === "exchange") return world.stage === 0
     ? "Recall your companion and use the Transfer Control."
     : "Recall your companion and read the Crew Log.";
+  if (world.mission === "departure") return world.stage === 0
+    ? "Recall your companion and set the Departure Signal."
+    : "Bring your recalled companion to the Boarding Reader.";
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
   if (!world.readerMask) return "Bring your recalled companion to both fare readers.";
@@ -331,7 +335,7 @@ function archiveRouteObjective(world: WorldView) {
 function stationPrompt(world: WorldView, actor: ViewActor) {
   const point = nearestMarker(markers(), actor.x, actor.z);
   if (!point || !actor.hp) return "";
-  if (world.mission === "exchange" && world.status !== "signal") return "";
+  if ((world.mission === "exchange" || world.mission === "departure") && world.status !== "signal") return "";
   if (world.mission === "terminal") {
     const ready = point.readerBit ? !(world.readerMask & point.readerBit) : world.readerMask === TERMINAL_READERS_COMPLETE;
     if (world.status !== "signal" || !ready) return "";
@@ -343,7 +347,8 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
       if (point.readerBit !== (1 << world.wave)) return point.title + " • Waiting for signal";
     }
   }
-  const recall = world.mission === "archive" || world.status === "signal" && (world.mission === "terminal" || world.mission === "exchange"
+  const recall = world.mission === "archive" || world.status === "signal" && (world.mission === "terminal"
+    || world.mission === "exchange" || world.mission === "departure"
     || point.id === "register" || point.id === "signal" && world.mission === "return");
   return recall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title;
 }
@@ -379,11 +384,16 @@ function updateHUD(actor?: ViewActor) {
         : world.mission === "archive" ? world.stage === 0 ? "Clear the archive entrance." : "Defend the archive while the playback deck spins up."
         : world.mission === "exchange" ? world.stage === 0 ? "Step off the Cable Runner’s marked line, then strike during recovery."
           : "Cover the rear lane while the transfer line powers up."
+        : world.mission === "departure" ? world.stage === 0 ? "Clear the entrance to Bay Four."
+          : world.wave === 0 ? "Punish the Switchkeeper after it swings."
+          : "Watch the rear lane and clear both enemies."
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
-      interlude: world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",
+      interlude: world.mission === "departure" ? "The Switchkeeper is staggered. A Cable Runner is coming from the west."
+        : world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",
       route: world.mission === "archive" ? archiveRouteObjective(world) : "Use the blue door marker to enter the relay room.",
       signal: signalObjective(world),
-      complete: "Job complete. Use Mission to return to the plaza.",
+      complete: world.mission === "departure" ? "Job complete. Watch the train or use Mission to return to the plaza."
+        : "Job complete. Use Mission to return to the plaza.",
       failed: "Party down. Retry from the Mission panel.",
     })[world.status] ?? "";
   text("objective-line", target);
@@ -488,10 +498,11 @@ document.addEventListener("click", (event) => {
   if (action === "resume") { closePanel(); return; }
   if (action === "care") {
     room?.send("customize", { play: true });
-    audio.sound("observe");
+    const remembersDeparture = profile.lore.includes("departure");
+    audio.sound(remembersDeparture ? "departure" : "observe");
     const local = room && world?.actors.get(room.sessionId);
     if (local && room) view.react({ type: "observe", source: room.sessionId, x: local.x, z: local.z });
-    notify(profile.companion + " answers with a two-beat pulse.");
+    notify(profile.companion + (remembersDeparture ? " taps the Bay Four departure rhythm." : " answers with a two-beat pulse."));
     return;
   }
   if (action === "morph-confirm") {

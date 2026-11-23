@@ -4,7 +4,7 @@ Relay District is an original browser beat ’em up with a persistent town, shor
 
 ## Current development baseline
 
-The project has a shared plaza for up to 16 LAN players, four-player instance rooms, SQLite saves, four companion forms and mastery drills, and a timed in-combat rescue. The first story sequence runs from The Last Crossing through Dead Line Exchange. Challenge routes unlock forms alongside the story. Use the [README](../README.md) to check the routes and commands in the current build.
+The project has a shared plaza for up to 16 LAN players, four-player instance rooms, SQLite saves, four companion forms and mastery drills, and a timed in-combat rescue. The first story arc runs from The Last Crossing through First Departure. Challenge routes unlock forms alongside the story. Use the [README](../README.md) to check the routes and commands in the current build.
 
 | Milestone | Verified progress | Open acceptance |
 | --- | --- | --- |
@@ -13,6 +13,7 @@ The project has a shared plaza for up to 16 LAN players, four-player instance ro
 | Optional contracts | Terminal Watch is repeatable after East Terminal. Two SDK clients verified a wipe, a rescue-assisted clear, and a clean replay that unlocks the Signal Tag. Chrome verified the patrol cues and equipping the keepsake. SQLite coverage verifies restart and duplicate rewards. | Add support contribution and playtest the patrols across the four companion forms. |
 | Tidegate Signal Archive | The fifth chapter adds two patrols, alternating live channel readers, and a journal recording that leads to Dead Line Exchange. Solo and two-player SDK clients cleared both fights. Co-op checks cover reconnecting after a scan and one reward per clear. Chrome checks cover the prompts at widescreen and 4:3. | Add audio playback for the recording in the companion room and run a fresh-player walkthrough. |
 | Dead Line Exchange | The sixth chapter introduces the Cable Runner’s committed charge, then pairs it with a Gateback. Solo, two-player, and four-client SDK runs cleared both fights. The four-client test used 100 ms simulated round-trip latency on one machine. Chrome verified a keyboard sidestep, the companion interactions, and the crew log. | Playtest the enemy with mixed weapon families and add a replay contract after the first departure. |
+| First Departure | Solo and two-player SDK runs cleared Bay Four and verified the Switchkeeper's health carries through the reinforcement warning. Chrome verified train arrival and departure, ticket equipment after reload, and the companion's audible room response. SQLite coverage verifies the one-time arc reward and the equipped ticket after a restart. | Add a separate replay contract and walk a new player through the arc without seeded progress. |
 
 ## Design references
 
@@ -59,11 +60,9 @@ The chapter, companion, equipment, and social designs below are Relay District p
 - Record a full 16-player plaza and four simultaneous four-player instances in a timed soak before increasing the population target. Track tick processing time, reconnect success, error rate, and reward duplicates. Build any multi-process architecture from observed capacity and measured bottlenecks. Existing LAN rooms use the browser and server architecture already in the repository. [Colyseus multi-process room guidance](https://docs.colyseus.io/scalability)
 - A hosted pilot requires a release decision, actual remote-browser playtests, and measured concurrency on the intended infrastructure. A public source repository is the current distribution channel for verified builds.
 
-## Proposed story after Dead Line Exchange
+## After First Departure
 
-| Route | Discovery | Encounter and return |
-| --- | --- | --- |
-| First Departure | Witness the first verified return and resolve the erased manifest. Give the companion a recognizable home reaction after the trip. | Bring back the first arc’s encounter skills in a finale with a legible recovery between phases. Award an arc keepsake and open a separate replay version of the route. |
+The finale restores the partner records and closes the Last Crossing arc. The next replay milestone adds a separate Bay Four contract with a new formation and a visible reward, alongside improvements to party finding and companion room interactions.
 
 ## How to mark progress
 
