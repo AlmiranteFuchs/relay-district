@@ -2,7 +2,7 @@ import { Client, type Room } from "@colyseus/sdk";
 import { COMPANION_PLAY, type CompanionPlayMessage } from "../../shared/src/companion-play.ts";
 import type { CrewAssist } from "../../shared/src/crew-assists.ts";
 import { ARM_TICKS, canRescueIn, DT, rescueDistance, RESCUE_RANGE, RESCUE_TICKS, stepWalk, type CombatEvent, type Input } from "../../shared/src/combat.ts";
-import { availableTrinkets, battleRank, FORMS, isFamily, isMission, JOBS, LORE, missionLockReason, ROOM_THEMES, type Action, type Family,
+import { availableTrinkets, battleRank, FORMS, isFamily, isMission, JOBS, LORE, missionLockReason, ROOM_THEMES, TICK_RATE, type Action, type Family,
   type Mission, type Profile } from "../../shared/src/content.ts";
 import {
   DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW,
@@ -133,7 +133,8 @@ function capture(state: Wire) {
   });
   return {
     kind: state.kind, mission: state.mission, status: state.status, code: state.code, leader: state.leader,
-    stage: state.stage, wave: state.wave, readerMask: state.readerMask, frame: state.frame, practice: state.practice, actors,
+    stage: state.stage, wave: state.wave, readerMask: state.readerMask, readerUntil: state.readerUntil,
+    frame: state.frame, practice: state.practice, actors,
   };
 }
 
@@ -478,6 +479,13 @@ function signalObjective(world: WorldView) {
   if (world.mission === "departure") return world.stage === 0
     ? "Recall your companion and set the Departure Signal."
     : "Bring your recalled companion to the Boarding Reader.";
+  if (world.mission === "viaduct") {
+    if (world.stage === 3) return "Recall your companion and read the Signal Ledger.";
+    const seconds = viaductSeconds(world);
+    return seconds > 0
+      ? "East Relay is live for " + seconds + "s. Answer with a recalled companion."
+      : "Open West Relay with your companion recalled, then answer East Relay.";
+  }
   if (world.mission === "bayrelay") return bayRelayObjective(world);
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
@@ -505,10 +513,14 @@ function bayRelayObjective(world: WorldView) {
   return world.status === "combat" ? goal + " Each call staggers the patrol." : goal;
 }
 
+function viaductSeconds(world: WorldView) {
+  return Math.max(0, Math.ceil((world.readerUntil - world.frame) / TICK_RATE));
+}
+
 function stationPrompt(world: WorldView, actor: ViewActor) {
   const point = nearestMarker(markers(), actor.x, actor.z);
   if (!point || !actor.hp) return "";
-  if ((world.mission === "exchange" || world.mission === "departure") && world.status !== "signal") return "";
+  if ((world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct") && world.status !== "signal") return "";
   if (world.mission === "terminal") {
     const ready = point.readerBit ? !(world.readerMask & point.readerBit) : world.readerMask === TERMINAL_READERS_COMPLETE;
     if (world.status !== "signal" || !ready) return "";
@@ -524,8 +536,13 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
     if (world.status !== "combat" && world.status !== "signal") return "";
     if (point.readerBit && (world.readerMask & point.readerBit)) return point.title + " • Linked";
   }
+  if (world.mission === "viaduct" && world.stage === 1) {
+    const seconds = viaductSeconds(world);
+    if (point.id === "viaduct-west" && seconds > 0) return "West Relay • Sending to East Relay";
+    if (point.id === "viaduct-east" && seconds === 0) return "East Relay • Waiting for West Relay";
+  }
   const recall = world.mission === "archive" || world.mission === "bayrelay" || world.status === "signal" && (world.mission === "terminal"
-    || world.mission === "exchange" || world.mission === "departure"
+    || world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct"
     || point.id === "register" || point.id === "signal" && world.mission === "return");
   return recall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title;
 }
@@ -565,6 +582,8 @@ function updateHUD(actor?: ViewActor) {
         : world.mission === "departure" ? world.stage === 0 ? "Clear the entrance to Bay Four."
           : world.wave === 0 ? "Punish the Switchkeeper after it swings."
           : "Watch the rear lane and clear both enemies."
+        : world.mission === "viaduct" ? world.stage === 0 ? "Clear the scouts from the viaduct."
+          : "Hold the viaduct while the Signal Ledger powers up."
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: world.mission === "departure" ? "The Switchkeeper is staggered. A Cable Runner is coming from the west."
         : world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",

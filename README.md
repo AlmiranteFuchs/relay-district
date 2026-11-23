@@ -43,6 +43,8 @@ After Tidegate, take **Dead Line Exchange**. Step off the Cable Runner’s marke
 
 Clear Dead Line Exchange to unlock **First Departure**. Set the Departure Signal with your companion recalled. Keep an eye on the west approach when the Switchkeeper staggers, then use the Boarding Reader after the fight. The first arc closes with a new journal memory and the **Bay Four Ticket** keepsake. Back at the companion room, Play together lets your partner repeat the departure rhythm.
 
+After First Departure, take **South Viaduct**. Clear the scouts, then use West Relay with your companion recalled to open a ten-second window at East Relay. One courier can cross the deck, or two couriers can send and answer from opposite sides. Hold the viaduct once the relays link, then read the Signal Ledger with your companion recalled to record the next stop in the party's journals.
+
 Clear East Terminal to unlock **Terminal Watch** in Dispatch. This repeatable contract has two patrols and awards 28 battle XP per clear. Keep the whole party on its feet through both patrols to unlock the **Signal Tag**, which you can equip in the companion room. A rescue can save the run after a knockdown.
 
 Clear First Departure to unlock **Bay Four Relay** in Dispatch. Use West Call and East Call with your companion recalled. Each call briefly staggers the patrol. Cancel an attack aimed at a crewmate, set up a crewmate's hit, or complete a rescue to earn a line in the crew report under **Mission** after the clear. You can also link the calls after the fight. Each clear awards 32 battle XP, and the first unlocks the **Relay Pennant** in the companion room.

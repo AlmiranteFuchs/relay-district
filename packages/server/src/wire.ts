@@ -68,6 +68,7 @@ export class GameState extends Schema {
   declare stage: number;
   declare wave: number;
   declare readerMask: number;
+  declare readerUntil: number;
   declare frame: number;
   declare practice: boolean;
   declare actors: MapSchema<ActorState>;
@@ -75,12 +76,12 @@ export class GameState extends Schema {
   constructor() {
     super();
     Object.assign(this, { kind: "plaza", mission: "", status: "plaza", code: "", leader: "",
-      stage: 0, wave: 0, readerMask: 0, frame: 0, practice: false, actors: new MapSchema<ActorState>(),
+      stage: 0, wave: 0, readerMask: 0, readerUntil: 0, frame: 0, practice: false, actors: new MapSchema<ActorState>(),
       crewAssists: new ArraySchema<CrewAssistState>() });
   }
 }
 defineTypes(GameState, {
   kind: "string", mission: "string", status: "string", code: "string", leader: "string",
-  stage: "uint8", wave: "uint8", readerMask: "uint8", frame: "uint32", practice: "boolean", actors: { map: ActorState },
+  stage: "uint8", wave: "uint8", readerMask: "uint8", readerUntil: "uint32", frame: "uint32", practice: "boolean", actors: { map: ActorState },
   crewAssists: { array: CrewAssistState },
 });

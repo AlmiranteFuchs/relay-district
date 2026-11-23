@@ -11,7 +11,8 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
 import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
-  DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
+  DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE,
+  VIADUCT_RELAY_TICKS, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, CrewAssistState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
 
@@ -392,6 +393,10 @@ const departureWaves = [
   wave(["keeper", 8.35, -.85]),
   wave(["runner", -5.8, -2.15]),
 ];
+const viaductWaves = [
+  wave(["runner", 2.6, -2.1], ["skitter", 5.2, 2.4]),
+  wave(["guard", 8.4, 2.15], ["runner", -3.7, 1.25]),
+];
 const bayRelayPatrol = wave(["runner", -2.85, -1.3], ["guard", 4.75, .9], ["runner", 7.25, -2.35]);
 const watchWaves = [
   wave(["skitter", -2.5, 2.1], ["guard", 3.8, -1.7]),
@@ -514,6 +519,7 @@ export class MissionRoom extends GameRoom {
     this.state.stage = 0;
     this.state.wave = 0;
     this.state.readerMask = 0;
+    this.state.readerUntil = 0;
     this.state.crewAssists.clear();
     this.state.status = "approach";
     this.waveReady = 0;
@@ -547,6 +553,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "departure") {
       this.spawn(departureWaves[0]);
       this.story(JOBS.departure.title, "Bay 4 has been waiting for both halves of the fare. Clear the concourse and bring your recalled partner to the departure signal.");
+    } else if (this.mission === "viaduct") {
+      this.spawn(viaductWaves[0]);
+      this.story(JOBS.viaduct.title, "The 05:20 train crossed into the river fog. Your partner can still hear the hand switches Mara's crew used to keep the east feed running. Clear the scout patrol and follow the signal.");
     } else if (this.mission === "bayrelay") {
       this.spawn(bayRelayPatrol);
       this.story(JOBS.bayrelay.title, "Dispatch needs both call boxes checked. Use each box with a recalled partner. During combat, each call interrupts the patrol once. Clear the platform to sign off.");
@@ -589,6 +598,7 @@ export class MissionRoom extends GameRoom {
 
   protected override afterStep() {
     this.creditRelayOpening();
+    this.expireViaductRelay();
     if (this.mission === "watch" && this.watchCommended && this.state.status === "combat"
       && this.actors().some((player) => player.hp === 0)) {
       this.watchCommended = false;
@@ -680,6 +690,16 @@ export class MissionRoom extends GameRoom {
       } else {
         this.state.stage = 2;
         this.story("Boarding reader ready", "The platform is clear. Recall your partner and match both halves of the fare at the boarding reader.");
+      }
+      return;
+    }
+    if (this.mission === "viaduct") {
+      this.state.stage = this.state.stage === 0 ? 1 : 3;
+      this.state.status = "signal";
+      if (this.state.stage === 1) {
+        this.story("The hand switches", "Recall your partner and start at West Relay. The east post needs to answer within ten seconds. Two couriers can split up, or you can cross the lane yourself.");
+      } else {
+        this.story("East feed restored", "The east relay is holding. Bring your recalled partner to the signal ledger to see where the feed goes next.");
       }
       return;
     }
@@ -778,6 +798,8 @@ export class MissionRoom extends GameRoom {
       this.interactTerminal(entry, point);
     } else if (this.mission === "archive") {
       this.interactArchive(entry, point);
+    } else if (this.mission === "viaduct") {
+      this.interactViaduct(entry, point);
     } else if (this.mission === "bayrelay") {
       this.interactBayRelay(entry, point);
     } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register"
@@ -936,6 +958,45 @@ export class MissionRoom extends GameRoom {
     } else {
       this.broadcast("notice", point.title + " recorded.");
     }
+  }
+
+  private expireViaductRelay() {
+    if (this.state.readerUntil === 0 || this.state.frame < this.state.readerUntil) return;
+    this.state.readerMask = 0;
+    this.state.readerUntil = 0;
+    this.broadcast("notice", "Signal faded. Restart at West Relay.");
+  }
+
+  private interactViaduct(entry: Entry, point: Marker) {
+    if (this.state.status !== "signal") return;
+    if (point.id === "viaduct-ledger") {
+      if (this.hearSignal(entry, point)) this.finish();
+      return;
+    }
+    const { readerBit } = point;
+    if (!readerBit) return;
+    this.expireViaductRelay();
+    if (point.id === "viaduct-west") {
+      if (this.state.readerUntil > 0) {
+        entry.client.send("notice", "West Relay is already live. Head east.");
+        return;
+      }
+      if (!this.hearSignal(entry, point)) return;
+      this.state.readerMask = readerBit;
+      this.state.readerUntil = this.state.frame + VIADUCT_RELAY_TICKS;
+      this.broadcast("notice", "West Relay sent. East Relay is live.");
+      return;
+    }
+    if (this.state.readerUntil === 0) {
+      entry.client.send("notice", "West Relay must open the signal first.");
+      return;
+    }
+    if (!this.hearSignal(entry, point)) return;
+    this.state.readerMask |= readerBit;
+    this.state.readerUntil = 0;
+    this.state.stage = 2;
+    this.spawn(viaductWaves[1]);
+    this.story("Relay bridged", "The old east feed is carrying current. A Gateback is coming from the far side while a Cable Runner flanks the west post. Arm your partner and keep the line open.");
   }
 
   private finish() {

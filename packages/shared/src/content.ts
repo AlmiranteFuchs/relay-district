@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -137,6 +137,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "The boarding reader restores the twelve partner records and matches them to the twelve passengers who made it home. Mara's crew got every partner through the return route. Your partner fits both halves of the fare together and answers the chime. The signal turns green at 05:20. As the train leaves Bay 4, the reader prints a ticket marked DEPARTED.",
     hint: "Read the boarding record at Bay 4 after clearing First Departure",
   },
+  viaduct: {
+    title: "South Viaduct signal ledger",
+    text: "The newest entry records the 05:20 train from Bay 4. Below it are the names of Mara's crew, who kept the east feed running by hand after the city cut power. They passed the current between two posts and checked each pass with a two-beat call. Your partner knows the reply. The line continues below the river wall at Floodgate Lift.",
+    hint: "Recover the ledger past the relay posts at South Viaduct",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -163,6 +168,10 @@ export const JOBS: Record<Mission, {
   departure: {
     title: "First Departure", description: "Take both halves of the fare to Bay 4 and clear the platform for the 05:20 train.",
     clearLore: "departure", requiresChapter: true, prerequisite: "exchange",
+  },
+  viaduct: {
+    title: "South Viaduct", description: "Follow the Bay 4 train onto the viaduct and hand the signal from West Relay to East Relay.",
+    clearLore: "viaduct", requiresChapter: true, prerequisite: "departure",
   },
   bayrelay: {
     title: "Bay Four Relay",

@@ -11,6 +11,7 @@ import { MODEL_SLOTS, type ModelSlot } from "./model-replacements.ts";
 import { ArchiveScenery } from "./archive-view.ts";
 import { ExchangeScenery } from "./exchange-view.ts";
 import { DepartureScenery } from "./departure-view.ts";
+import { ViaductScenery } from "./viaduct-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -20,7 +21,7 @@ export interface ViewActor {
 }
 export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
-  frame: number; practice: boolean; readerMask: number; actors: Map<string, ViewActor>;
+  frame: number; practice: boolean; readerMask: number; readerUntil: number; actors: Map<string, ViewActor>;
 }
 
 interface Visual {
@@ -62,7 +63,7 @@ export class GameView {
   private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
-  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery;
+  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -279,6 +280,10 @@ export class GameView {
       this.labels.set(marker.id, label);
     }
     const root = this.scenery = new TransformNode("District architecture", this.scene);
+    if (world.mission === "viaduct") {
+      this.missionScenery = new ViaductScenery(this.scene, root, markers);
+      return;
+    }
     if (world.mission === "departure" || world.mission === "bayrelay") {
       this.missionScenery = new DepartureScenery(this.scene, root, markers, world.mission === "bayrelay");
       return;

@@ -37,6 +37,16 @@ const departureMarkers: Marker[][] = [
   [],
   [{ id: "departure-boarding", x: 8.2, z: 2.7, title: "Boarding Reader" }],
 ];
+export const VIADUCT_RELAY_TICKS = 10 * TICK_RATE;
+const viaductMarkers: Marker[][] = [
+  [],
+  [
+    { id: "viaduct-west", x: -6.55, z: 2.65, title: "West Relay", readerBit: 0b01 },
+    { id: "viaduct-east", x: 6.55, z: -1.75, title: "East Relay", readerBit: 0b10 },
+  ],
+  [],
+  [{ id: "viaduct-ledger", x: 8.25, z: 2.55, title: "Signal Ledger" }],
+];
 export const BAY_RELAY_CALLS_COMPLETE = 0b11;
 export const BAY_RELAY_STAGGER_TICKS = 40;
 const bayRelayMarkers: Marker[] = [
@@ -51,6 +61,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "archive") return archiveMarkers[stage] ?? [];
   if (mission === "exchange") return exchangeMarkers[stage] ?? [];
   if (mission === "departure") return departureMarkers[stage] ?? [];
+  if (mission === "viaduct") return viaductMarkers[stage] ?? [];
   if (mission === "bayrelay") return bayRelayMarkers;
   if (mission !== "chapter") return [];
   return stage === 0

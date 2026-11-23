@@ -13,7 +13,7 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
 import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, DEPARTURE_REINFORCEMENT_TICKS,
-  routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
+  routeMarkers, TERMINAL_READERS_COMPLETE, VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -1086,6 +1086,179 @@ test("First Departure keeps the Switchkeeper across its reinforcement phase and 
     await until("replay resets the approach and reinforcement", () => stage(0, "combat") && [first, other].every((room) => room.state.wave === 0));
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("South Viaduct expires a relay, supports a teammate handoff, and grants the ledger once", { timeout: 80000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    const party = [alpha, beta];
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      if (account !== guest) server.store.reward([id], "departure-unlock", "departure");
+    }
+    const initial = await Promise.all(party.map((account) => account.profile()));
+    await assert.rejects(guest.sdk.create("mission", { mission: "viaduct" }), /Clear First Departure/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "viaduct" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear First Departure/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const [west, east] = routeMarkers("viaduct", 1);
+    const [ledger] = routeMarkers("viaduct", 3);
+    const notices = rooms.map((room) => {
+      const messages: string[] = [];
+      room.onMessage("notice", (notice: string) => { messages.push(notice); });
+      return messages;
+    });
+    const phase = (stage: number, status: string) => rooms.every((room) => room.state.stage === stage && room.state.status === status);
+    const patrol = (room: Socket) => [...room.state.actors.values()].filter((actor) => actor.kind !== "player").map((actor) => actor.kind).sort();
+    const relays = (mask: number, deadline: number) => rooms.every((room) => room.state.readerMask === mask && room.state.readerUntil === deadline);
+    const interactAndSync = async (courier: TestCourier) => {
+      courier.room.send("interact");
+      courier.send(0, 0);
+      await until("the server has processed the call attempt", () => courier.me.ack === courier.seq);
+    };
+
+    first.send("begin");
+    await until("both players enter the viaduct", () => phase(0, "combat"));
+    assert.deepEqual(rooms.map(patrol), [["runner", "skitter"], ["runner", "skitter"]]);
+    await fight([a, b], "signal", 24000);
+    await until("both players see the crossing relays", () => phase(1, "signal"));
+    assert.ok(a.me.hp > 0 && b.me.hp > 0);
+    assert.ok(relays(0, 0));
+    await Promise.all([a.go(west.x, west.z), b.go(east.x, east.z)]);
+    await recallForReader(b);
+    await interactAndSync(b);
+    await until("East Relay reports that West must go first", () => notices[1].some((notice) => notice.includes("West Relay must open")));
+    assert.ok(phase(1, "signal") && relays(0, 0));
+
+    await until("the West operator stands idle", () => a.me.phase === "idle");
+    if (!a.me.armed) a.send(0, 0, "morph");
+    await until("the West operator holds a weapon", () => a.me.armed);
+    await interactAndSync(a);
+    await until("West Relay asks for a recalled companion", () => notices[0].some((notice) => notice.includes("Recall your partner")));
+    assert.ok(relays(0, 0));
+    await recallForReader(a);
+    first.send("interact");
+    const deadline = await until("both clients receive the live West signal", () => {
+      const value = first.state.readerUntil;
+      return value > 0 && relays(west.readerBit!, value) ? value : undefined;
+    });
+    const remainingTicks = deadline - first.state.frame;
+    assert.ok(remainingTicks > VIADUCT_RELAY_TICKS - 24 && remainingTicks <= VIADUCT_RELAY_TICKS);
+    await until("the relay window has advanced", () => first.state.frame >= deadline - VIADUCT_RELAY_TICKS + 10);
+    await interactAndSync(a);
+    await until("West Relay reports an existing live signal", () => notices[0].some((notice) => notice.includes("already live")));
+    assert.ok(relays(west.readerBit!, deadline), "duplicate West cannot extend the authoritative deadline");
+    await until("the server expires both clients' signal", () => first.state.frame >= deadline && relays(0, 0), 16000);
+    assert.ok(phase(1, "signal"));
+    notices[1].length = 0;
+    await interactAndSync(b);
+    await until("East Relay rejects the expired signal", () => notices[1].some((notice) => notice.includes("West Relay must open")));
+    assert.ok(phase(1, "signal") && relays(0, 0));
+
+    // An injured, low-energy operator makes a refill observable even after a clean patrol clear.
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    Object.assign(mission["players"].get(first.sessionId)!.player, { hp: 64, energy: 43 });
+    await until("West's current health reaches both clients", () => rooms.every((room) => room.state.actors.get(first.sessionId)?.hp === 64));
+    first.send("interact");
+    await until("the reopened West signal reaches both clients", () => first.state.readerUntil > deadline && relays(west.readerBit!, first.state.readerUntil));
+    await a.go(-9.5, 4.4);
+    await until("West waits clear of the runner's spawn", () => a.me.ack === a.seq && !a.me.moving);
+    const positionsAndHealth = () => [a, b].map(({ me }) => ({ x: me.x, y: me.y, z: me.z, hp: me.hp }));
+    const beforeHandoff = positionsAndHealth();
+    other.send("interact");
+    await until("East's answer starts the second patrol", () => phase(2, "combat") && relays(west.readerBit! | east.readerBit!, 0));
+    assert.deepEqual(positionsAndHealth(), beforeHandoff);
+    assert.ok(a.me.energy < 100, "the handoff does not refill energy");
+    assert.deepEqual(rooms.map(patrol), [["guard", "runner"], ["guard", "runner"]]);
+    await fight([a, b], "signal", 30000);
+    await until("both players see the Signal Ledger", () => phase(3, "signal"));
+    assert.deepEqual(await Promise.all(party.map((account) => account.profile())), initial);
+
+    const reader = a.me.hp > 0 ? a : b;
+    await reader.go(ledger.x, ledger.z);
+    await until("the Ledger operator stands idle", () => reader.me.phase === "idle");
+    if (!reader.me.armed) reader.send(0, 0, "morph");
+    await until("the Ledger operator holds a weapon", () => reader.me.armed);
+    const readerNotices = notices[rooms.indexOf(reader.room)];
+    readerNotices.length = 0;
+    await interactAndSync(reader);
+    await until("the Signal Ledger asks for recall", () => readerNotices.some((notice) => notice.includes("Recall your partner")));
+    assert.ok(phase(3, "signal"));
+    await recallForReader(reader);
+    reader.room.send("interact");
+    reader.room.send("interact");
+    await until("both clients see the viaduct clear", () => phase(3, "complete"));
+    for (const [index, account] of party.entries()) {
+      const profile = await account.profile();
+      assert.equal(profile.companion, initial[index].companion);
+      assert.equal(profile.battleXp, initial[index].battleXp + 48);
+      assert.deepEqual(profile.lore, [...initial[index].lore, "viaduct"]);
+      assert.deepEqual(profile.clears, [...initial[index].clears, "viaduct"]);
+    }
+    first.send("begin");
+    await until("replay resets both relays and the deadline", () => phase(0, "combat") && relays(0, 0));
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+async function recallForReader(courier: TestCourier) {
+  await until("reader operator stands idle", () => courier.me.phase === "idle");
+  if (courier.me.armed) courier.send(0, 0, "morph");
+  await until("reader operator recalls the companion", () => !courier.me.armed && courier.me.phase === "idle");
+}
+
+test("one courier can cross South Viaduct and read the ledger", { timeout: 65000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  let room: Socket | undefined;
+  try {
+    const account = await player(origin, "Solo");
+    const { id } = server.store.session(account.sdk.auth.token)!;
+    server.store.reward([id], "chapter-unlock", "chapter");
+    server.store.reward([id], "departure-unlock", "departure");
+    const route = room = connectHandlers(await account.sdk.create("mission", { mission: "viaduct" }) as Socket);
+    await local(route);
+    const courier = new TestCourier(route);
+    const [west, east] = routeMarkers("viaduct", 1);
+    const [ledger] = routeMarkers("viaduct", 3);
+    route.send("begin");
+    await until("solo viaduct combat starts", () => route.state.status === "combat");
+    await fight([courier], "signal", 20000);
+    assert.equal(route.state.stage, 1);
+    await courier.go(west.x, west.z);
+    await recallForReader(courier);
+    route.send("interact");
+    const deadline = await until("solo West Relay opens a window", () => route.state.readerUntil > 0 && route.state.readerUntil);
+    await courier.go(east.x, east.z);
+    assert.ok(route.state.frame < deadline);
+    route.send("interact");
+    await until("the same courier answers at East", () => route.state.stage === 2 && route.state.status === "combat");
+    await fight([courier], "signal", 25000);
+    assert.equal(route.state.stage, 3);
+    await courier.go(ledger.x, ledger.z);
+    await recallForReader(courier);
+    route.send("interact");
+    await until("the solo ledger completes the route", () => route.state.status === "complete");
+    const profile = await account.profile();
+    assert.equal(profile.clears.at(-1), "viaduct");
+    assert.equal(profile.lore.at(-1), "viaduct");
+  } finally {
+    await room?.leave();
     await server.stop();
   }
 });
