@@ -63,3 +63,17 @@ For the first Kite Moth strike, contact starts after 10 of its 26 simulation tic
 3. Review both facings at 4:3 and widescreen. Check foot placement, staff attachment, silhouette at camera distance, and a deliberate depth whiff. Play one encounter with effects and sound and one with sound muted.
 
 For the score and combat cues, see [Replacing music and sounds](AUDIO.md).
+
+## Period character benchmark
+
+The study covers the [courier, Kite Moth, and coil staff](../assets/model-benchmarks/period/). The 2,325-triangle courier uses a narrow waist, tapered trousers, cropped sleeves, and one 256 × 256 diffuse atlas. Neri uses swept chitin plates and a painted eye that carries into the staff. The models, costume, creature, and textures are original. The references are dated examples of silhouette, face treatment, and gameplay framing. [Flyff client capture, May 2004](https://www.4gamer.net/store/shots/flyff02/pages/image0004.html) · [Flyff publisher models, August 2005](https://www.4gamer.net/games/015/G001558/20050823201647/) · [GhostX Ultimate lab capture, December 2013](https://buladifu.blogspot.com/2013/12/ghostx-ultimate-part-two.html)
+
+Export editable Blender scenes and the GLBs from the repository root.
+
+```powershell
+$relayModelStudy = Join-Path $env:TEMP 'relay-period-models'
+blender -b -t 2 --python-exit-code 1 --python scripts/period_courier.py -- --output (Join-Path $relayModelStudy 'courier.glb') --blend (Join-Path $relayModelStudy 'courier.blend')
+blender -b -t 2 --python-exit-code 1 --python scripts/period_moth.py -- --output-dir $relayModelStudy
+```
+
+Copy the three study GLBs into the `models` folder **inside a separate browser build** to test them as a set. Use the [isolated preview instructions](../README.md#preview-changes-with-a-separate-save) for the build and save. Start Practice floor and compare both facings with the companion following, arming, during the first staff contact, and recalling. The existing pose rig moves the new model through its named pivots. The courier source scene keeps its mesh pieces editable and the GLB groups them by pivot.
