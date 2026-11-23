@@ -8,7 +8,7 @@ import {
   DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW,
   type DispatchInvitation, type DispatchInviteRequest, type DispatchRecentCrew,
 } from "../../shared/src/dispatch.ts";
-import { LIFT_PHASE, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
+import { LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
 import { CompanionRoomPlay } from "./companion-room-play.ts";
@@ -489,6 +489,9 @@ function signalObjective(world: WorldView) {
   if (world.mission === "lift") return world.stage === 3
     ? "Recall your companion and read the Lift Log."
     : "Recall your companion and use the Brake Wheel.";
+  if (world.mission === "pump") return world.stage === 3
+    ? "Recall your companion and read the Pump Record."
+    : "Recall your companion and use the Intake Control.";
   if (world.mission === "bayrelay") return bayRelayObjective(world);
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
@@ -528,10 +531,19 @@ function liftCombatObjective(world: WorldView) {
     + (world.readerMask === LIFT_PHASE.lowering ? "midpoint." : "lower landing.");
 }
 
+function pumpCombatObjective(world: WorldView) {
+  if (world.stage === 0) return "Clear the pump hall patrol.";
+  if (world.readerMask === PUMP_PHASE.idle) return "Fight the Switchkeeper. Watch the floor lanes.";
+  const lane = PUMP_LANES[world.wave].title;
+  if (world.readerMask === PUMP_PHASE.warning) return `Leave the ${lane.toLowerCase()} before it bursts (${readerSeconds(world)}s).`;
+  return lane + " discharge. Stay clear of the next marked lane.";
+}
+
 function stationPrompt(world: WorldView, actor: ViewActor) {
   const point = nearestMarker(markers(), actor.x, actor.z);
   if (!point || !actor.hp) return "";
-  if ((world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct") && world.status !== "signal") return "";
+  if ((world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct" || world.mission === "pump")
+    && world.status !== "signal") return "";
   if (world.mission === "terminal") {
     const ready = point.readerBit ? !(world.readerMask & point.readerBit) : world.readerMask === TERMINAL_READERS_COMPLETE;
     if (world.status !== "signal" || !ready) return "";
@@ -556,7 +568,7 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
     && !(world.status === "combat" && world.readerMask === LIFT_PHASE.jammed)) return "";
   const recall = world.mission === "archive" || world.mission === "bayrelay" || world.mission === "lift"
     || world.status === "signal" && (world.mission === "terminal"
-    || world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct"
+    || world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct" || world.mission === "pump"
     || point.id === "register" || point.id === "signal" && world.mission === "return");
   return recall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title;
 }
@@ -599,6 +611,7 @@ function updateHUD(actor?: ViewActor) {
         : world.mission === "viaduct" ? world.stage === 0 ? "Clear the scouts from the viaduct."
           : "Hold the viaduct while the Signal Ledger powers up."
         : world.mission === "lift" ? liftCombatObjective(world)
+        : world.mission === "pump" ? pumpCombatObjective(world)
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: world.mission === "departure" ? "The Switchkeeper is staggered. A Cable Runner is coming from the west."
         : world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",

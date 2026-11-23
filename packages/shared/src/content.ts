@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -147,6 +147,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "A work order from the night of the closure lists two ways across the river wall. The Authority sealed the passenger stairs and kept the lift working for its own inspectors. Mara taught the partners to feel the brake pawl slip just before the jam. Your partner rocks in time with the counterweight. The 05:20 train tripped the lower track sensor. Its next stop is the Pump Court.",
     hint: "Read the maintenance log at the bottom of Floodgate Lift",
   },
+  pump: {
+    title: "Pump Court handover record",
+    text: "Mara logged three partners by name on the pump roster after the evacuation. They had volunteered to keep working with their couriers. The Authority's copy lists three pieces of equipment with the same clock-out times. Your partner rubs the paper at the first name. The 05:20 train picked up the original roster here and is carrying it to the Bellhouse, where waiting crews can answer those names in person.",
+    hint: "Read the Pump Record after defeating the Switchkeeper at Pump Court",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -181,6 +186,10 @@ export const JOBS: Record<Mission, {
   lift: {
     title: "Floodgate Lift", description: "Take the service lift below the river wall. Keep its brake running while you fight off the guard.",
     clearLore: "lift", requiresChapter: true, prerequisite: "viaduct",
+  },
+  pump: {
+    title: "Pump Court", description: "Follow the train into the pump hall and fight the Switchkeeper between pressure discharges.",
+    clearLore: "pump", requiresChapter: true, prerequisite: "lift",
   },
   bayrelay: {
     title: "Bay Four Relay",

@@ -13,6 +13,7 @@ import { ExchangeScenery } from "./exchange-view.ts";
 import { DepartureScenery } from "./departure-view.ts";
 import { ViaductScenery } from "./viaduct-view.ts";
 import { LiftScenery } from "./lift-view.ts";
+import { PumpScenery } from "./pump-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -64,7 +65,7 @@ export class GameView {
   private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
-  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery;
+  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery | PumpScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -281,6 +282,10 @@ export class GameView {
       this.labels.set(marker.id, label);
     }
     const root = this.scenery = new TransformNode("District architecture", this.scene);
+    if (world.mission === "pump") {
+      this.missionScenery = new PumpScenery(this.scene, root, markers);
+      return;
+    }
     if (world.mission === "lift") {
       this.missionScenery = new LiftScenery(this.scene, root, markers);
       return;

@@ -139,6 +139,21 @@ export function isInvulnerable(player: Player): boolean {
   return player.move?.kind === "dodge" && player.move.age >= 2 && player.move.age <= 12;
 }
 
+export function hurtPlayer(player: Player, tick: number, events: CombatEvent[],
+  impact: { source: string; damage: number; heavy: boolean; knockback?: number }) {
+  const damage = Math.min(player.hp, impact.damage);
+  player.hp -= damage;
+  player.stagger = 18;
+  player.combo = 0;
+  player.move = null;
+  player.buffer = null;
+  player.lastHit = tick;
+  player.x += impact.knockback ?? 0;
+  clampPosition(player);
+  events.push({ type: "hit", source: impact.source, target: player.id, damage, x: player.x, z: player.z, heavy: impact.heavy });
+  if (!player.hp) publish(events, "down", player);
+}
+
 function tryAction(player: Player, action: Action, axes: Axes, tick: number, events: CombatEvent[]): boolean {
   if (player.stagger > 0) return false;
   if (player.move && !(action === "dodge" && canDodgeCancel(player.move))) return false;
@@ -282,17 +297,8 @@ export function stepEnemy(
         : forward >= -.25 && forward <= 1.77 * size && Math.abs(dz) <= .86 * size;
       if (!inRange) continue;
       enemy.hit.add(player.id);
-      const damage = Math.min(player.hp, runner ? 19 : size === 1.5 ? 25 : size === 1.15 ? 21 : 13);
-      player.hp -= damage;
-      player.stagger = 18;
-      player.combo = 0;
-      player.move = null;
-      player.buffer = null;
-      player.lastHit = tick;
-      player.x += enemy.facing * 0.29;
-      clampPosition(player);
-      publish(events, "hit", enemy, { target: player.id, damage, x: player.x, z: player.z, heavy: size > 1 });
-      if (!player.hp) publish(events, "down", player);
+      hurtPlayer(player, tick, events, { source: enemy.id, damage: runner ? 19 : size === 1.5 ? 25 : size === 1.15 ? 21 : 13,
+        heavy: size > 1, knockback: enemy.facing * .29 });
     }
     if (enemy.ticks === 0) { enemy.phase = "recover"; enemy.ticks = runner ? 40 : size === 1.5 ? 62 : size > 1 ? 45 : 32; }
     return;

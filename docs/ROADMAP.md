@@ -22,6 +22,7 @@ The project has a shared plaza for up to 16 LAN players, four-player instance ro
 | Bay Four crew report | The completed run shows call-box assists and rescues in Mission. Three SDK clients verified interruptions, follow-up hits, canceled and completed rescues, reconnect, and retry. Two Chrome clients at 100 ms simulated round-trip latency saw matching reports at 16:9 and 4:3. | Playtest how often crews coordinate calls across the four fighting styles. |
 | South Viaduct | The first chapter after Bay Four adds two patrols, a ten-second relay handoff, and a ledger that points to Floodgate Lift. Solo and two-player SDK runs cleared both patrols and tested the timer and reward. Chrome checked the relays at 16:9 and 4:3, and SQLite verified the journal after restart. | Run the split relay with four couriers on physical LAN devices and check whether new crews coordinate from the in-world cues. |
 | Floodgate Lift | The service lift jams halfway down. A recalled companion can reset the brake during a fight. Two SDK couriers verified the timed descent, the live guard's lock on the log, and one reward per player after restart. Isolated Chrome checked retry, docking after clearing the guard early, the jam after a page reload, and the world cues at 16:9 and 4:3. | Play through at normal pace with a mixed-form crew and check whether the brake's warning stands out during a fight. |
+| Pump Court | The Switchkeeper fight adds a repeating pressure discharge with amber floor warnings. Solo and two-courier SDK runs cleared the fight over loopback. The paired run verified a hit on the marked lane, jump and dodge timing, and one record reward per courier. Isolated Chrome at 100 ms simulated round-trip latency verified a keyboard sidestep, muted warnings at 16:9 and 4:3, and the journal after reload. | Playtest where a four-courier team chooses to fight when the Switchkeeper straddles a lane boundary. |
 
 ## Design references
 
@@ -70,7 +71,7 @@ The chapter, companion, equipment, and social designs below are Relay District p
 
 ## After First Departure
 
-The finale restores the partner records and closes the Last Crossing arc. Bay Four Relay adds a replay contract, a companion keepsake, and a crew report for calls and rescues. Dispatch invitations and last-crew selection help returning players assemble for another job. Signal Echo gives them a short activity with their companion while they wait. South Viaduct follows the 05:20 train and restores the east feed. Floodgate Lift takes the crew below the river wall, where its maintenance log points to Pump Court.
+The finale restores the partner records and closes the Last Crossing arc. Bay Four Relay adds a replay contract, a companion keepsake, and a crew report for calls and rescues. Dispatch invitations and last-crew selection help returning players assemble for another job. Signal Echo gives them a short activity with their companion while they wait. South Viaduct follows the 05:20 train and restores the east feed. Floodgate Lift takes the crew below the river wall. The Pump Court handover record reveals how the Authority logged working companions, and the train carries the original roster to the Bellhouse.
 
 ## How to mark progress
 

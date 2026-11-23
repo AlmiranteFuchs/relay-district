@@ -4,14 +4,15 @@ import {
   battleRank, BAY_FOUR_TICKET, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, RELAY_PENNANT, SIGNAL_TAG, TICK_RATE,
   type Action, type Family, type Mission, type Profile,
 } from "../../shared/src/content.ts";
-import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
+import { canRescueIn, hurtPlayer, isInvulnerable, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
 import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
   type CompanionPlayMessage, type Signal } from "../../shared/src/companion-play.ts";
 import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
-  DEPARTURE_REINFORCEMENT_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE,
+  DEPARTURE_REINFORCEMENT_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, PUMP_TIMING,
+  routeMarkers, TERMINAL_READERS_COMPLETE,
   VIADUCT_RELAY_TICKS, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, CrewAssistState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
@@ -401,6 +402,11 @@ const liftWaves = [
   wave(["skitter", -2.45, -2.8], ["skitter", 3.85, 2.6]),
   wave(["guard", 6.1, 1.5], ["runner", 2.7, -2.55]),
 ];
+const pumpWaves = [
+  wave(["runner", .65, -2.4], ["skitter", 3.75, 2.4]),
+  wave(["keeper", 5.35, 0]),
+];
+const nextPressureLane = [2, 0, 1];
 const bayRelayPatrol = wave(["runner", -2.85, -1.3], ["guard", 4.75, .9], ["runner", 7.25, -2.35]);
 const watchWaves = [
   wave(["skitter", -2.5, 2.1], ["guard", 3.8, -1.7]),
@@ -563,6 +569,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "lift") {
       this.spawn(liftWaves[0]);
       this.story(JOBS.lift.title, "The signal ledger leads to a service lift under the river wall. Clear the upper landing to get to the Brake Wheel.");
+    } else if (this.mission === "pump") {
+      this.spawn(pumpWaves[0]);
+      this.story(JOBS.pump.title, "The 05:20 passed the pump intake before the gates closed. Clear the patrol and check the Intake Control with your partner.");
     } else if (this.mission === "bayrelay") {
       this.spawn(bayRelayPatrol);
       this.story(JOBS.bayrelay.title, "Dispatch needs both call boxes checked. Use each box with a recalled partner. During combat, each call interrupts the patrol once. Clear the platform to sign off.");
@@ -651,7 +660,9 @@ export class MissionRoom extends GameRoom {
         return;
       }
     }
-    if (!this.enemies.size || [...this.enemies.values()].some((enemy) => enemy.hp > 0)) return;
+    const enemiesRemain = [...this.enemies.values()].some((enemy) => enemy.hp > 0);
+    if (enemiesRemain && this.mission === "pump" && this.state.stage === 2) this.advancePump();
+    if (!this.enemies.size || enemiesRemain) return;
     if (this.mission === "night") {
       this.state.status = "signal";
       this.story("The return register", "The platform is quiet. The register’s reader gives two short pulses. Recall your partner and bring it to the reader.");
@@ -720,6 +731,19 @@ export class MissionRoom extends GameRoom {
         this.state.stage = 3;
         this.state.status = "signal";
         this.story("Lower landing clear", "The lift has reached the bottom and the guard is down. Bring your recalled partner to the Lift Log.");
+      }
+      return;
+    }
+    if (this.mission === "pump") {
+      this.state.status = "signal";
+      this.state.readerMask = PUMP_PHASE.idle;
+      this.state.readerUntil = 0;
+      if (this.state.stage === 0) {
+        this.state.stage = 1;
+        this.story("Intake clear", "Your partner recognizes the markings beside the intake. Recall it and use the Intake Control. Watch the floor when pressure returns.");
+      } else {
+        this.state.stage = 3;
+        this.story("Pressure dropping", "The Switchkeeper is down and the intake is settling. Recall your partner at the Pump Record by the east wall.");
       }
       return;
     }
@@ -822,6 +846,15 @@ export class MissionRoom extends GameRoom {
       this.interactViaduct(entry, point);
     } else if (this.mission === "lift") {
       this.interactLift(entry, point);
+    } else if (this.mission === "pump" && this.state.status === "signal") {
+      if (!this.hearSignal(entry, point, "Recall your partner with Q first.")) return;
+      if (point.id === "pump-record") this.finish();
+      else {
+        this.state.stage = 2;
+        this.state.readerUntil = this.state.frame + PUMP_TIMING.initial;
+        this.spawn(pumpWaves[1]);
+        this.story("Pressure rising", "The Switchkeeper is blocking the record. The pumps mark one floor lane before each discharge. Step across a painted boundary before it bursts.");
+      }
     } else if (this.mission === "bayrelay") {
       this.interactBayRelay(entry, point);
     } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register"
@@ -1053,6 +1086,30 @@ export class MissionRoom extends GameRoom {
     this.state.readerMask = LIFT_PHASE.resuming;
     this.state.readerUntil = this.state.frame + LIFT_LEG_TICKS;
     this.broadcast("notice", "Brake released. The lift is moving again.");
+  }
+
+  private advancePump() {
+    const { frame, readerMask, readerUntil, wave: laneIndex } = this.state;
+    if (!readerUntil || frame < readerUntil) return;
+    const lane = PUMP_LANES[laneIndex];
+    if (readerMask === PUMP_PHASE.idle) {
+      this.state.readerMask = PUMP_PHASE.warning;
+      this.state.readerUntil = frame + PUMP_TIMING.warning;
+      this.events.push({ type: "windup", source: "pump-discharge", x: 0, z: (lane.minZ + lane.maxZ) / 2 });
+    } else if (readerMask === PUMP_PHASE.warning) {
+      this.state.readerMask = PUMP_PHASE.burst;
+      this.state.readerUntil = frame + PUMP_TIMING.burst;
+      // The pressure wave hits on the first burst tick. The foam remains visible as it drains.
+      for (const { connected, player } of this.players.values()) {
+        const inside = player.z >= lane.minZ && (player.z < lane.maxZ || laneIndex === 2 && player.z === lane.maxZ);
+        if (!connected || !player.hp || !inside || player.y >= .42 || isInvulnerable(player)) continue;
+        hurtPlayer(player, frame, this.events, { source: "pump-discharge", damage: 18, heavy: true });
+      }
+    } else {
+      this.state.readerMask = PUMP_PHASE.idle;
+      this.state.readerUntil = frame + PUMP_TIMING.gap;
+      this.state.wave = nextPressureLane[laneIndex];
+    }
   }
 
   private finish() {

@@ -53,6 +53,17 @@ const liftBrake: Marker = { id: "lift-brake", x: -5.4, z: 1.9, title: "Brake Whe
 const liftMarkers: Marker[][] = [
   [], [liftBrake], [liftBrake], [{ id: "lift-log", x: 6.9, z: 2.7, title: "Lift Log" }],
 ];
+export const PUMP_LANES = [
+  { title: "Near lane", minZ: -4.75, maxZ: -1.45 },
+  { title: "Middle lane", minZ: -1.45, maxZ: 1.45 },
+  { title: "Far lane", minZ: 1.45, maxZ: 4.75 },
+] as const;
+export const PUMP_PHASE = { idle: 0, warning: 1, burst: 2 } as const;
+export const PUMP_TIMING = { initial: 3 * TICK_RATE, warning: 2.2 * TICK_RATE, burst: 24, gap: 123 } as const;
+const pumpMarkers: Marker[][] = [
+  [], [{ id: "pump-intake", x: -5.15, z: 2.65, title: "Intake Control" }],
+  [], [{ id: "pump-record", x: 7.85, z: 2.62, title: "Pump Record" }],
+];
 export const BAY_RELAY_CALLS_COMPLETE = 0b11;
 export const BAY_RELAY_STAGGER_TICKS = 40;
 const bayRelayMarkers: Marker[] = [
@@ -69,6 +80,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "departure") return departureMarkers[stage] ?? [];
   if (mission === "viaduct") return viaductMarkers[stage] ?? [];
   if (mission === "lift") return liftMarkers[stage] ?? [];
+  if (mission === "pump") return pumpMarkers[stage] ?? [];
   if (mission === "bayrelay") return bayRelayMarkers;
   if (mission !== "chapter") return [];
   return stage === 0

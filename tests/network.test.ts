@@ -16,7 +16,8 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
 import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, DEPARTURE_REINFORCEMENT_TICKS,
-  LIFT_LEG_TICKS, LIFT_PHASE, routeMarkers, TERMINAL_READERS_COMPLETE, VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
+  LIFT_LEG_TICKS, LIFT_PHASE, PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE,
+  VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -1383,6 +1384,146 @@ test("Floodgate Lift requires a recalled brake reset and saves the log for the w
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server?.stop();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Pump Court cycles its discharges, honors evasion, and awards one Pump Record clear", { timeout: 85000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    const party = [alpha, beta];
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      server.store.reward([id], "viaduct-unlock", "viaduct");
+      if (account !== guest) server.store.reward([id], "lift-unlock", "lift");
+    }
+    const initial = await Promise.all(party.map((account) => account.profile()));
+    await assert.rejects(guest.sdk.create("mission", { mission: "pump" }), /Clear Floodgate Lift/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "pump" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear Floodgate Lift/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const [control] = routeMarkers("pump", 1);
+    const [record] = routeMarkers("pump", 3);
+    const roomPhase = (stage: number, status: string) => rooms.every((room) => room.state.stage === stage && room.state.status === status);
+    const enemies = (room: Socket) => [...room.state.actors.values()].filter((actor) => actor.kind !== "player");
+    const notices = rooms.map((room) => {
+      const messages: string[] = [];
+      room.onMessage("notice", (notice: string) => { messages.push(notice); });
+      return messages;
+    });
+    const rejectArmedReader = async (courier: TestCourier, stage: number) => {
+      await until("the reader operator stands idle", () => courier.me.phase === "idle");
+      if (!courier.me.armed) courier.send(0, 0, "morph");
+      await until("the reader operator holds a weapon", () => courier.me.armed && courier.me.phase === "idle");
+      const messages = notices[rooms.indexOf(courier.room)];
+      const previous = messages.length;
+      courier.room.send("interact");
+      await until("the reader rejects the armed companion", () => messages.slice(previous).some((notice) => notice.includes("Recall your partner")));
+      assert.ok(roomPhase(stage, "signal"));
+    };
+    const discharges = rooms.map((room) => {
+      const hits: { target?: string; damage?: number }[] = [];
+      const cues: CombatEvent[] = [];
+      room.onMessage("combat", (event: CombatEvent) => {
+        if (event.source !== "pump-discharge") return;
+        if (event.type === "hit") hits.push({ target: event.target, damage: event.damage });
+        if (event.type === "windup") cues.push(event);
+      });
+      return { hits, cues };
+    });
+    const waitForDischarge = (label: string, phase: number, lane?: number) => until(label, () => {
+      const deadline = first.state.readerUntil;
+      return deadline > 0 && roomPhase(2, "combat") && rooms.every((room) => room.state.readerMask === phase
+        && room.state.readerUntil === deadline && (lane === undefined || room.state.wave === lane)) ? deadline : undefined;
+    }, 9000);
+    const [near, middle, far] = PUMP_LANES.keys();
+    const laneCenter = (lane: number) => (PUMP_LANES[lane].minZ + PUMP_LANES[lane].maxZ) / 2;
+
+    first.send("begin");
+    await until("both players enter the pump entrance", () => roomPhase(0, "combat"));
+    for (const room of rooms) assert.deepEqual(enemies(room).map((enemy) => enemy.kind).sort(), ["runner", "skitter"]);
+    await fight([a, b], "signal", 24000);
+    await until("both players see Intake Control", () => roomPhase(1, "signal"));
+    assert.ok(a.me.hp > 18 && b.me.hp > 0);
+    await a.go(control.x, control.z);
+    await rejectArmedReader(a, 1);
+    await recallForReader(a);
+    first.send("interact");
+    const firstDeadline = await waitForDischarge("both clients see the initial discharge delay", PUMP_PHASE.idle, near);
+    assert.ok(firstDeadline - first.state.frame > PUMP_TIMING.initial - 24 && firstDeadline - first.state.frame <= PUMP_TIMING.initial);
+    for (const room of rooms) assert.deepEqual(enemies(room).map((enemy) => enemy.kind), ["keeper"]);
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    const [keeper] = mission["enemies"].values();
+    // Delay the Switchkeeper while measuring the lane hazard, then fight it at full HP.
+    Object.assign(keeper, { phase: "recover", ticks: 1800, target: "" });
+    await Promise.all([a.go(-5, laneCenter(near)), b.go(3, laneCenter(middle))]);
+    const health = [a.me.hp, b.me.hp];
+    const nearWarning = await waitForDischarge("the near lane warns first", PUMP_PHASE.warning, near);
+    assert.equal(nearWarning - firstDeadline, PUMP_TIMING.warning);
+    const nearBurst = await waitForDischarge("both clients see the near burst", PUMP_PHASE.burst, near);
+    assert.equal(nearBurst - nearWarning, PUMP_TIMING.burst);
+    const nearHit = [{ target: first.sessionId, damage: 18 }];
+    for (const feed of discharges) assert.deepEqual(feed.hits, nearHit);
+    assert.deepEqual([a.me.hp, b.me.hp], [health[0] - 18, health[1]]);
+    const nearGap = await waitForDischarge("the first burst ends", PUMP_PHASE.idle);
+    assert.equal(nearGap - nearBurst, PUMP_TIMING.gap);
+    for (const feed of discharges) assert.deepEqual(feed.hits, nearHit, "an active burst only hits once");
+
+    await Promise.all([a.go(-5, laneCenter(far)), b.go(3, laneCenter(far))]);
+    const farWarning = await waitForDischarge("far warns after near", PUMP_PHASE.warning, far);
+    assert.equal(farWarning - nearGap, PUMP_TIMING.warning);
+    await until("Ivo can jump into the far burst", () => mission.state.frame >= farWarning - 17);
+    b.send(0, 0, "jump");
+    await until("Aster can dodge through the far burst", () => mission.state.frame >= farWarning - 8);
+    a.send(1, 0, "dodge");
+    await waitForDischarge("both clients see the far burst", PUMP_PHASE.burst, far);
+    assert.equal(a.me.phase, "dodge");
+    assert.ok(a.me.z >= PUMP_LANES[far].minZ && b.me.z >= PUMP_LANES[far].minZ);
+    assert.ok(b.me.y >= .42, "the jump cleared the water height");
+    for (const feed of discharges) assert.deepEqual(feed.hits, nearHit, "the in-lane jump and dodge evade the burst");
+    assert.deepEqual([a.me.hp, b.me.hp], [health[0] - 18, health[1]]);
+
+    await waitForDischarge("middle warns after far", PUMP_PHASE.warning, middle);
+    await waitForDischarge("middle water passes before the pattern repeats", PUMP_PHASE.burst, middle);
+    await waitForDischarge("the sequence repeats at near", PUMP_PHASE.warning, near);
+    for (const feed of discharges) {
+      assert.equal(feed.cues.length, 4);
+      assert.deepEqual(feed.hits, nearHit);
+    }
+    Object.assign(keeper, { phase: "idle", ticks: 0 });
+    await fight([a, b], "signal", 32000);
+    await until("killing the Switchkeeper stops the pump and unlocks the record", () => roomPhase(3, "signal")
+      && rooms.every((room) => room.state.readerMask === PUMP_PHASE.idle && room.state.readerUntil === 0));
+    assert.deepEqual(await Promise.all(party.map((account) => account.profile())), initial);
+
+    const reader = a.me.hp > 0 ? a : b;
+    await reader.go(record.x, record.z);
+    await rejectArmedReader(reader, 3);
+    await recallForReader(reader);
+    reader.room.send("interact");
+    reader.room.send("interact");
+    await until("both clients see the Pump Record clear", () => roomPhase(3, "complete"));
+    for (const [index, account] of party.entries()) {
+      const profile = await account.profile();
+      assert.equal(profile.companion, initial[index].companion);
+      assert.equal(profile.battleXp, initial[index].battleXp + 48);
+      assert.equal(profile.bond, initial[index].bond + 6);
+      assert.deepEqual(profile.lore, [...initial[index].lore, "pump"]);
+      assert.deepEqual(profile.clears, [...initial[index].clears, "pump"]);
+    }
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
   }
 });
 

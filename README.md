@@ -1,6 +1,6 @@
 # Relay District
 
-Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore nine story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
+Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore ten story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
 
 ## Run the game
 
@@ -46,6 +46,8 @@ Clear Dead Line Exchange to unlock **First Departure**. Set the Departure Signal
 After First Departure, take **South Viaduct**. Clear the scouts, then use West Relay with your companion recalled to open a ten-second window at East Relay. One courier can cross the deck, or two couriers can send and answer from opposite sides. Hold the viaduct once the relays link, then read the Signal Ledger with your companion recalled to record the next stop in the party's journals.
 
 After South Viaduct, take **Floodgate Lift**. Clear the upper landing and use the Brake Wheel with your companion recalled. Reset it halfway down when it jams. One courier can work the wheel while the others fight, or you can clear the guard before resetting it. Read the Lift Log with your companion at the lower landing.
+
+After Floodgate Lift, take **Pump Court**. Clear the patrol and use the Intake Control with your companion recalled. During the Switchkeeper fight, step out of the amber-striped lane before it discharges. Read the Pump Record with your companion to learn what the 05:20 train picked up here.
 
 Clear East Terminal to unlock **Terminal Watch** in Dispatch. This repeatable contract has two patrols and awards 28 battle XP per clear. Keep the whole party on its feet through both patrols to unlock the **Signal Tag**, which you can equip in the companion room. A rescue can save the run after a knockdown.
 
