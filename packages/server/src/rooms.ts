@@ -6,7 +6,8 @@ import {
 } from "../../shared/src/content.ts";
 import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
-import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, type DispatchInvitation } from "../../shared/src/dispatch.ts";
+import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
+  type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
   DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, GameState } from "./wire.ts";
@@ -15,9 +16,34 @@ import type { Session, Store } from "./store.ts";
 let store: Store;
 const codes = new Map<string, string>();
 const profileRooms = new Map<string, Set<GameRoom>>();
+const recentCrews = new Map<string, { members: string[]; expiresAt: number }>();
+let recentCrewExpiry: ReturnType<typeof setTimeout> | undefined;
 const actions = new Set<Action>(["attack", "skill", "mastery", "morph", "dodge", "jump"]);
-export function configureRooms(db: Store) { store = db; }
+export function configureRooms(db: Store) {
+  store = db;
+  recentCrews.clear();
+  clearTimeout(recentCrewExpiry);
+  recentCrewExpiry = undefined;
+}
 export function roomByCode(code: string) { return codes.get(code.toUpperCase()); }
+
+function expireRecentCrews() {
+  recentCrewExpiry = undefined;
+  const now = Date.now();
+  let nextExpiry = Infinity;
+  for (const [id, crew] of recentCrews) {
+    if (crew.expiresAt <= now) recentCrews.delete(id);
+    else nextExpiry = Math.min(nextExpiry, crew.expiresAt);
+  }
+  if (nextExpiry !== Infinity) recentCrewExpiry = setTimeout(expireRecentCrews, nextExpiry - now).unref();
+}
+
+function rememberCrew(members: string[]) {
+  if (members.length < 2) return;
+  const crew = { members, expiresAt: Date.now() + DISPATCH_RECENT_CREW_TTL_MS };
+  for (const profileId of members) recentCrews.set(profileId, crew);
+  recentCrewExpiry ??= setTimeout(expireRecentCrews, DISPATCH_RECENT_CREW_TTL_MS).unref();
+}
 
 interface Entry {
   profileId: string;
@@ -201,6 +227,7 @@ export class PlazaRoom extends GameRoom {
   onCreate() {
     this.install();
     this.onMessage(DISPATCH_INVITE, (client, raw: unknown) => this.sendDispatchInvites(client, raw));
+    this.onMessage(DISPATCH_RECENT_CREW, (client) => this.sendRecentCrew(client));
     this.onMessage("customize", (client, raw: unknown) => {
       const entry = this.players.get(client.sessionId);
       if (entry) this.applyProfile(entry, store.customize(entry.profileId, asRecord(raw)));
@@ -244,6 +271,24 @@ export class PlazaRoom extends GameRoom {
       return;
     }
     mission.inviteFromPlaza(sender, [...new Set(targets)].map((target) => this.players.get(target)));
+  }
+
+  private sendRecentCrew(client: Client) {
+    const sender = this.players.get(client.sessionId);
+    if (!sender?.connected) return;
+    const crew = recentCrews.get(sender.profileId);
+    const targets: string[] = [];
+    if (crew && crew.expiresAt > Date.now()) {
+      const connected = new Map<string, string>();
+      for (const [sessionId, entry] of this.players) {
+        if (entry.connected && entry !== sender) connected.set(entry.profileId, sessionId);
+      }
+      for (const profileId of crew.members) {
+        const sessionId = connected.get(profileId);
+        if (sessionId) targets.push(sessionId);
+      }
+    }
+    client.send(DISPATCH_RECENT_CREW, { targets } satisfies DispatchRecentCrew);
   }
 
   protected override interact(client: Client) {
@@ -399,6 +444,10 @@ export class MissionRoom extends GameRoom {
 
   private begin() {
     void this.lock();
+    if (this.mission !== "training") {
+      const members = [...this.players.values()].filter((entry) => entry.connected).map((entry) => entry.profileId);
+      rememberCrew(members);
+    }
     this.runId = randomUUID();
     this.state.stage = 0;
     this.state.wave = 0;

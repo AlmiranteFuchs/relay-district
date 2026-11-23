@@ -16,6 +16,7 @@ The project has a shared plaza for up to 16 LAN players, four-player instance ro
 | First Departure | Solo and two-player SDK runs cleared Bay Four and verified the Switchkeeper's health carries through the reinforcement warning. Chrome verified train arrival and departure, ticket equipment after reload, and the companion's audible room response. SQLite coverage verifies the one-time arc reward and the equipped ticket after a restart. | Walk a new player through the arc without seeded progress. |
 | Bay Four Relay | The separate replay contract gives players two opportunities to interrupt the patrol for allies. A recalled companion can use either call box. SDK tests verify the shared interrupt, solo clear, and reward handling. Chrome verifies the reader cues and equipping the Relay Pennant after a clear. | Playtest how parties use the openings across different weapon families and extend support recognition to other replay routes. |
 | Dispatch invitations | The mission leader can invite up to three couriers from the same plaza. Each courier chooses whether to join. The SDK test checks private delivery, eligibility, and a full lobby. Three Chrome clients verified invitation and room-code joins, a shared start, and return to the same plaza. | Keep a party together across multiple jobs and test it on two physical devices. |
+| Recent crew | Dispatch can select available teammates from the most recent group job for 30 minutes. SDK tests cover fresh plaza sessions, expiry, and mission eligibility. Three Chrome clients verified that returned teammates can be invited to a second job. | Try the two-job flow on physical devices and test how groups regroup when a plaza fills. |
 
 ## Design references
 
@@ -64,7 +65,7 @@ The chapter, companion, equipment, and social designs below are Relay District p
 
 ## After First Departure
 
-The finale restores the partner records and closes the Last Crossing arc. Bay Four Relay adds a separate replay contract with a different formation and a companion keepsake. Dispatch invitations let players in the same plaza assemble a mission party. Persistent parties across consecutive jobs and companion room activities are the next plaza milestones.
+The finale restores the partner records and closes the Last Crossing arc. Bay Four Relay adds a separate replay contract with a different formation and a companion keepsake. Dispatch invitations and last-crew selection let returning players assemble for another job. The next plaza milestone is a repeatable companion room activity.
 
 ## How to mark progress
 

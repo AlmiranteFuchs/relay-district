@@ -8,7 +8,8 @@ import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
 import { BAY_FOUR_TICKET, RELAY_PENNANT, type Action, type Family, type Mission, type Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
-import { DISPATCH_INVITE, type DispatchInvitation } from "../packages/shared/src/dispatch.ts";
+import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
+  type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, DEPARTURE_REINFORCEMENT_TICKS,
   routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
 
@@ -188,6 +189,116 @@ test("Dispatch delivers private invitations from the mission leader and couriers
     mission.send("begin");
     await until("all four couriers see the leader start", () =>
       [mission, ...accepted, manual].every((room) => room.state.status === "approach"));
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("Dispatch remembers the last started crew across plaza sessions and keeps invites opt-in", { timeout: 22000 }, async (t) => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  const remember = (room: Socket) => {
+    rooms.push(room);
+    return connectHandlers(room);
+  };
+  const recentCrew = (plaza: Socket) => {
+    const replies: DispatchRecentCrew[] = [];
+    plaza.onMessage(DISPATCH_RECENT_CREW, (reply: DispatchRecentCrew) => { replies.push(reply); });
+    return {
+      replies,
+      request: async () => {
+        const index = replies.length;
+        plaza.send(DISPATCH_RECENT_CREW);
+        return until("Dispatch answers the recent crew request", () => replies[index]);
+      },
+    };
+  };
+  try {
+    const [alpha, beta, gamma, delta, outsider] =
+      await Promise.all(["Aster", "Beta", "Gamma", "Delta", "Outsider"].map((name) => player(origin, name)));
+    const firstPlaza = remember(await alpha.sdk.create("plaza") as Socket);
+    const teammates = await Promise.all([beta, gamma, delta].map(async (account) =>
+      remember(await account.sdk.joinById(firstPlaza.roomId) as Socket)));
+    const initialCouriers = [firstPlaza, ...teammates];
+    const bystander = remember(await outsider.sdk.joinById(firstPlaza.roomId) as Socket);
+    await Promise.all(rooms.map(local));
+
+    const originalJob = remember(await alpha.sdk.create("mission", { mission: "chapter" }) as Socket);
+    const originalCrew = [originalJob];
+    for (const account of [beta, gamma, delta]) originalCrew.push(remember(await account.sdk.joinById(originalJob.roomId) as Socket));
+    await Promise.all(originalCrew.map(local));
+    assert.deepEqual(await recentCrew(firstPlaza).request(), { targets: [] });
+    await Promise.all(initialCouriers.map((room) => room.leave()));
+    originalJob.send("begin");
+    await until("the first crew starts together", () => originalCrew.every((room) => room.state.status === "approach"));
+    await Promise.all(originalCrew.map((room) => room.leave()));
+
+    const host = remember(await alpha.sdk.joinById(bystander.roomId) as Socket);
+    const green = remember(await gamma.sdk.joinById(bystander.roomId) as Socket);
+    const blue = remember(await beta.sdk.joinById(bystander.roomId) as Socket);
+    const elsewhere = remember(await delta.sdk.create("plaza") as Socket);
+    await Promise.all([host, green, blue, elsewhere].map(local));
+    for (const [index, room] of [host, blue, green, elsewhere].entries()) {
+      assert.notEqual(room.sessionId, initialCouriers[index].sessionId);
+    }
+
+    const hostLookup = recentCrew(host);
+    const blueLookup = recentCrew(blue);
+    const bystanderLookup = recentCrew(bystander);
+    const outsideLookup = recentCrew(elsewhere);
+    const returning = { targets: [blue.sessionId, green.sessionId] };
+    assert.deepEqual(await hostLookup.request(), returning);
+    assert.equal(blueLookup.replies.length, 0);
+    assert.equal(bystanderLookup.replies.length, 0);
+    assert.equal(outsideLookup.replies.length, 0);
+    assert.deepEqual(await blueLookup.request(), { targets: [host.sessionId, green.sessionId] });
+    assert.deepEqual(await bystanderLookup.request(), { targets: [] });
+    assert.deepEqual(await outsideLookup.request(), { targets: [] });
+
+    for (const [mission, phase] of [["chapter", "approach"], ["training", "combat"]] as const) {
+      const solo = remember(await alpha.sdk.create("mission", { mission }) as Socket);
+      await local(solo);
+      solo.send("begin");
+      await until("solo or practice job starts", () => solo.state.status === phase);
+      await solo.leave();
+    }
+    const selected = await hostLookup.request();
+    assert.deepEqual(selected, returning);
+
+    for (const account of [alpha, beta]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "night-unlock", "chapter");
+    }
+    const nextJob = remember(await alpha.sdk.create("mission", { mission: "night" }) as Socket);
+    await local(nextJob);
+    const invites: DispatchInvitation[] = [];
+    const skipped: DispatchInvitation[] = [];
+    const notices: string[] = [];
+    blue.onMessage(DISPATCH_INVITE, (invite: DispatchInvitation) => { invites.push(invite); });
+    green.onMessage(DISPATCH_INVITE, (invite: DispatchInvitation) => { skipped.push(invite); });
+    bystander.onMessage(DISPATCH_INVITE, (invite: DispatchInvitation) => { skipped.push(invite); });
+    nextJob.onMessage("notice", (note: string) => { notices.push(note); });
+    host.send(DISPATCH_INVITE, { roomId: nextJob.roomId, targets: selected.targets });
+    const offer = await until("an eligible former teammate receives an invite", () => invites[0]);
+    await until("the progress gate still checks recent crew invites", () => notices.some((note) => note.includes("locked for Gamma")));
+    assert.deepEqual(offer, { roomId: nextJob.roomId, mission: "night", inviter: "Aster" });
+    assert.deepEqual(skipped, []);
+    assert.equal(nextJob.state.actors.size, 1);
+    assert.deepEqual(await hostLookup.request(), returning);
+
+    const accepted = remember(await beta.sdk.joinById(offer.roomId) as Socket);
+    await local(accepted);
+    nextJob.send("begin");
+    await until("the new crew starts their mission", () => [nextJob, accepted].every((room) => room.state.status === "approach"));
+    assert.deepEqual(await hostLookup.request(), { targets: [blue.sessionId] });
+
+    const realNow = Date.now.bind(Date);
+    t.mock.method(Date, "now", () => realNow() + DISPATCH_RECENT_CREW_TTL_MS + 1);
+    try {
+      assert.deepEqual(await hostLookup.request(), { targets: [] });
+    } finally { t.mock.restoreAll(); }
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

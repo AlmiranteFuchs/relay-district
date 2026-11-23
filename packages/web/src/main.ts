@@ -2,7 +2,10 @@ import { Client, type Room } from "@colyseus/sdk";
 import { ARM_TICKS, canRescueIn, DT, rescueDistance, RESCUE_RANGE, RESCUE_TICKS, stepWalk, type CombatEvent, type Input } from "../../shared/src/combat.ts";
 import { availableTrinkets, battleRank, FORMS, isFamily, isMission, JOBS, LORE, missionLockReason, ROOM_THEMES, type Action, type Family,
   type Mission, type Profile } from "../../shared/src/content.ts";
-import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, type DispatchInvitation, type DispatchInviteRequest } from "../../shared/src/dispatch.ts";
+import {
+  DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW,
+  type DispatchInvitation, type DispatchInviteRequest, type DispatchRecentCrew,
+} from "../../shared/src/dispatch.ts";
 import { nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
@@ -188,6 +191,19 @@ function attach(next: RelayRoom) {
     syncDispatchInvites();
     notify(invitation.inviter + " invited you to " + JOBS[invitation.mission].title + ". Open Dispatch to join.");
   });
+  next.onMessage(DISPATCH_RECENT_CREW, ({ targets }: DispatchRecentCrew) => {
+    if (room !== next || panel !== "dispatch") return;
+    const available = new Set(plazaCouriers().map(([id]) => id));
+    const current = [...new Set(targets.filter((id) => available.has(id)))].slice(0, DISPATCH_INVITE_LIMIT);
+    if (!current.length) {
+      text("dispatch-last-crew-status", "None of your last crewmates are in this plaza.");
+      return;
+    }
+    invitedCouriers.clear();
+    for (const id of current) invitedCouriers.add(id);
+    syncDispatchCrew();
+    text("dispatch-last-crew-status", "Last crew selected. Choose a mission to invite them.");
+  });
   next.onMessage("panel", (id: string) => {
     if (room === next && ["room", "dispatch", "workbench"].includes(id)) openPanel(id as Panel);
   });
@@ -282,10 +298,14 @@ function removeDispatchInvite(roomId: string) {
   syncDispatchInvites();
 }
 
+function plazaCouriers() {
+  return [...(world?.actors ?? [])].filter(([id, actor]) => id !== room?.sessionId && actor.connected && actor.kind === "player");
+}
+
 function syncDispatchCrew() {
   const list = document.getElementById("dispatch-couriers");
   if (!list) return;
-  const couriers = [...(world?.actors ?? [])].filter(([id, actor]) => id !== room?.sessionId && actor.connected && actor.kind === "player");
+  const couriers = plazaCouriers();
   const available = new Set(couriers.map(([id]) => id));
   for (const id of invitedCouriers) if (!available.has(id)) invitedCouriers.delete(id);
   const key = JSON.stringify(couriers.map(([id, actor]) => [id, actor.name]));
@@ -313,7 +333,9 @@ function drawPanel() {
     title = "District dispatch";
     body = '<div class="panel-grid"><div id="dispatch-invitations" class="panel-grid"></div><details'
       + (invitedCouriers.size ? " open" : "") + '><summary id="dispatch-crew-count"></summary>'
-      + '<div id="dispatch-couriers" class="panel-grid"></div><small>Selected couriers get an invitation when you create a mission room.</small></details></div>'
+      + '<div class="panel-grid"><div id="dispatch-couriers" class="panel-grid"></div><div>'
+      + button("Select last crew", "select-last-crew") + ' <small id="dispatch-last-crew-status" role="status"></small></div>'
+      + '<small>Selected couriers get an invitation when you create a mission room.</small></div></details></div>'
       + '<div class="panel-grid">' + (Object.keys(JOBS) as Mission[]).map((job) => {
       const locked = missionLockReason(job, profile.clears);
       return item(JOBS[job].title, escape(locked ?? JOBS[job].description),
@@ -586,6 +608,10 @@ document.addEventListener("click", (event) => {
   if (control.dataset.action) impulse(control.dataset.action as Action);
   const action = control.dataset.menu;
   if (!action) return;
+  if (action === "select-last-crew") {
+    if (connected && world?.kind === "plaza") room?.send(DISPATCH_RECENT_CREW);
+    return;
+  }
   if (action.startsWith("accept-invite-")) {
     const id = action.slice("accept-invite-".length);
     if (!busy && dispatchInvites.has(id)) {
@@ -626,6 +652,7 @@ element("panel-body").addEventListener("change", (event) => {
   if (!(input instanceof HTMLInputElement) || !input.hasAttribute("data-dispatch-courier")) return;
   if (input.checked && invitedCouriers.size < DISPATCH_INVITE_LIMIT) invitedCouriers.add(input.value);
   else invitedCouriers.delete(input.value);
+  text("dispatch-last-crew-status", "");
   syncDispatchCrew();
 });
 element("panel-body").addEventListener("submit", (event) => {
