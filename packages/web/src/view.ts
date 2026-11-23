@@ -4,7 +4,7 @@ import {
 } from "@babylonjs/core";
 import { FORMS, TICK_RATE, type Family } from "../../shared/src/content.ts";
 import { ENEMY_WINDUP_TICKS, RUNNER_HIT_RADIUS, RUNNER_LUNGE_TICKS, type CombatEvent } from "../../shared/src/combat.ts";
-import { TERMINAL_READERS_COMPLETE, type Marker, type RosterCase } from "../../shared/src/scene.ts";
+import { FLOOD_INDEX_BANKS, FLOOD_SCAN_TICKS, TERMINAL_READERS_COMPLETE, type IndexScan, type Marker, type RosterCase } from "../../shared/src/scene.ts";
 import { MothAnimation } from "./moth-animation.ts";
 import { instantiateActorModel, loadModelAsset, type ActorModel, type ModelAsset } from "./model-assets.ts";
 import { MODEL_SLOTS, type ModelSlot } from "./model-replacements.ts";
@@ -16,6 +16,7 @@ import { LiftScenery } from "./lift-view.ts";
 import { PumpScenery } from "./pump-view.ts";
 import { BellhouseScenery } from "./bellhouse-view.ts";
 import { AnnexScenery } from "./annex-view.ts";
+import { FloodIndexScenery } from "./flood-index-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -27,6 +28,7 @@ export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
   frame: number; practice: boolean; readerMask: number; readerUntil: number; actors: Map<string, ViewActor>;
   rosterCase?: RosterCase;
+  indexScans?: ReadonlyMap<string, IndexScan>;
 }
 
 interface Visual {
@@ -69,7 +71,8 @@ export class GameView {
   private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
-  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery | PumpScenery | BellhouseScenery | AnnexScenery;
+  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery | PumpScenery
+    | BellhouseScenery | AnnexScenery | FloodIndexScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -276,7 +279,8 @@ export class GameView {
     if (this.place === id) return;
     this.place = id;
     const keepScenery = world.mission === "bellhouse" && this.missionScenery instanceof BellhouseScenery
-      || world.mission === "annex" && this.missionScenery instanceof AnnexScenery;
+      || world.mission === "annex" && this.missionScenery instanceof AnnexScenery
+      || world.mission === "flood" && this.missionScenery instanceof FloodIndexScenery;
     if (!keepScenery) {
       this.scenery?.dispose();
       this.missionScenery?.dispose();
@@ -291,6 +295,10 @@ export class GameView {
     }
     if (keepScenery) return;
     const root = this.scenery = new TransformNode("District architecture", this.scene);
+    if (world.mission === "flood") {
+      this.missionScenery = new FloodIndexScenery(this.scene, root);
+      return;
+    }
     if (world.mission === "annex") {
       this.missionScenery = new AnnexScenery(this.scene, root);
       return;
@@ -908,6 +916,16 @@ export class GameView {
         visual.shadow.position.x = visual.at.x; visual.shadow.position.z = visual.at.z;
         visual.shadow.isVisible = actor.hp > 0;
         this.pose(visual, actor, dt, world.actors.get(actor.rescueTarget));
+        if (visual.creature && world.indexScans?.size) {
+          const bank = FLOOD_INDEX_BANKS.find((point) => world.indexScans?.get(point.id)?.courier === id);
+          const scan = bank && world.indexScans.get(bank.id);
+          if (bank && scan) {
+            const reach = Math.max(0, Math.min(1, (FLOOD_SCAN_TICKS - scan.until + world.frame) / 18));
+            const creature = visual.creature.node;
+            const target = new Vector3(bank.x - .38, .68 + Math.sin(this.clock * 9) * .045, bank.z - .33);
+            Vector3.LerpToRef(creature.position, target, reach, creature.position);
+          }
+        }
         const downed = world.kind === "mission" && actor.kind === "player" && !actor.hp;
         visual.label.hidden = (id === self && world.kind === "mission") || (!actor.hp && !downed);
         visual.label.classList.toggle("downed", downed);

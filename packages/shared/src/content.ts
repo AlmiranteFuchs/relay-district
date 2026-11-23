@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex" | "flood" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex" | "flood";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -162,6 +162,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "Clerk Vale accepted the Bellhouse roster and filed the signatures and partner marks under their own names. The stamp proves the city received it. When the old intake reader asks for an equipment code, your partner answers with its two-beat call. Vale pulls the original transfer card and points you to the Flood Index, where the working crews' records were moved during the closure.",
     hint: "Carry the signed roster to the Records Desk and clear its guard",
   },
+  flood: {
+    title: "Flood Index accession card",
+    text: "The crew bank matches the Bellhouse names to the original duty roster. The transfer bank shows where the Authority put their files after the closure. Someone pencilled 'return to owners' across the instruction to hold them indefinitely. Your partner remembers the two-beat call in the margin. Clerk Vale can use both records at the South Wall Hearing, where the crews have asked to read their names aloud.",
+    hint: "Scan both banks and read the Flood Folio in the lower archive",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -208,6 +213,10 @@ export const JOBS: Record<Mission, {
   annex: {
     title: "Registry Annex", description: "Carry the signed Bellhouse roster across the annex and file it with the Records Desk.",
     clearLore: "annex", requiresChapter: true, prerequisite: "bellhouse",
+  },
+  flood: {
+    title: "Flood Index", description: "Recover both archive entries with your companion and drive off the Switchkeeper guarding the folio.",
+    clearLore: "flood", requiresChapter: true, prerequisite: "annex",
   },
   bayrelay: {
     title: "Bay Four Relay",

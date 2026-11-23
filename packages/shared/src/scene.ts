@@ -88,6 +88,16 @@ export function annexCaseAction(rosterCase: RosterCase, actorId: string, x: numb
   if (!rosterCase.carrier && Math.hypot(x - rosterCase.x, z - rosterCase.z) <= CASE_PICKUP_REACH) return "pick-up";
   if (atDesk) return "needs-case";
 }
+
+export interface IndexScan { courier: string; until: number }
+export const FLOOD_SCAN_TICKS = 1.5 * TICK_RATE;
+export const FLOOD_INDEX_COMPLETE = 0b11;
+export const FLOOD_INDEX_BANKS = [
+  { id: "flood-crew", title: "Crew Index", x: -6.2, z: 2.4, readerBit: 0b01 },
+  { id: "flood-transfer", title: "Transfer Index", x: 5.95, z: -1.95, readerBit: 0b10 },
+] satisfies (Marker & { readerBit: number })[];
+export const FLOOD_FOLIO: Marker = { id: "flood-folio", title: "Flood Folio", x: 8.15, z: 2.55 };
+const floodMarkers: Marker[][] = [[], FLOOD_INDEX_BANKS, FLOOD_INDEX_BANKS, [FLOOD_FOLIO]];
 export const BAY_RELAY_CALLS_COMPLETE = 0b11;
 export const BAY_RELAY_STAGGER_TICKS = 40;
 const bayRelayMarkers: Marker[] = [
@@ -107,6 +117,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "pump") return pumpMarkers[stage] ?? [];
   if (mission === "bellhouse") return bellhouseMarkers[stage] ?? [];
   if (mission === "annex") return annexMarkers;
+  if (mission === "flood") return floodMarkers[stage] ?? [];
   if (mission === "bayrelay") return bayRelayMarkers;
   if (mission !== "chapter") return [];
   return stage === 0

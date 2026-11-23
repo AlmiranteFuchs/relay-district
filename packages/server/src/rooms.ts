@@ -11,10 +11,11 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
 import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ANNEX_CASE_HOME, ANNEX_FILING_DESK, annexCaseAction, ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
-  BELLHOUSE_CALLS, BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA,
+  BELLHOUSE_CALLS, BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, FLOOD_INDEX_BANKS, FLOOD_INDEX_COMPLETE,
+  FLOOD_SCAN_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA,
   PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE, type BellhouseCue, type BellhouseNote,
   VIADUCT_RELAY_TICKS, type Marker } from "../../shared/src/scene.ts";
-import { ActorState, CrewAssistState, GameState, RosterCaseState } from "./wire.ts";
+import { ActorState, CrewAssistState, GameState, IndexScanState, RosterCaseState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
 
 let store: Store;
@@ -415,6 +416,11 @@ const annexWaves = [
   wave(["runner", 1.3, -2.65], ["skitter", 4.7, 2.5]),
   wave(["runner", -.2, -2.9], ["guard", 6.75, .3]),
 ];
+const floodWaves = [
+  wave(["runner", 1.85, 1.9], ["skitter", 4.6, -2.05]),
+  wave(["keeper", 3.85, .65]),
+];
+const FLOOD_GUARD_STAGGER_TICKS = 42;
 const nextPressureLane = [2, 0, 1];
 const bayRelayPatrol = wave(["runner", -2.85, -1.3], ["guard", 4.75, .9], ["runner", 7.25, -2.35]);
 const watchWaves = [
@@ -546,6 +552,7 @@ export class MissionRoom extends GameRoom {
     this.state.readerMask = 0;
     this.state.readerUntil = 0;
     this.state.rosterCase = undefined;
+    this.state.indexScans.clear();
     this.state.crewAssists.clear();
     this.state.status = "approach";
     this.waveReady = 0;
@@ -594,6 +601,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "annex") {
       this.spawn(annexWaves[0]);
       this.story(JOBS.annex.title, "Ina left the signed roster in its red case at the west intake. Clerk Vale is waiting at the east desk. Clear the intake and bring the case across.");
+    } else if (this.mission === "flood") {
+      this.spawn(floodWaves[0]);
+      this.story(JOBS.flood.title, "Vale's transfer card leads to two readers below the public archive. Clear the lower hall so your partner can match the original crew and transfer records.");
     } else if (this.mission === "bayrelay") {
       this.spawn(bayRelayPatrol);
       this.story(JOBS.bayrelay.title, "Dispatch needs both call boxes checked. Use each box with a recalled partner. During combat, each call interrupts the patrol once. Clear the platform to sign off.");
@@ -647,6 +657,7 @@ export class MissionRoom extends GameRoom {
       this.broadcast("notice", "A courier went down. The patrol contract can still be cleared.");
     }
     this.stepRescues();
+    this.stepIndexScans();
     if (this.mission === "archive" && this.state.status === "route" && this.state.frame >= this.waveReady) {
       this.state.wave = this.state.wave === 0 ? 1 : 0;
       this.waveReady += ARCHIVE_CHANNEL_TICKS;
@@ -800,6 +811,19 @@ export class MissionRoom extends GameRoom {
       }
       return;
     }
+    if (this.mission === "flood") {
+      if (this.state.stage === 0) {
+        this.state.stage = 1;
+        this.state.status = "signal";
+        this.story("The two banks", "Recall your partner, stand still at either reader, and press E. The scan takes a moment. A crewmate can cover you or use the other reader.");
+      } else if (this.state.readerMask === FLOOD_INDEX_COMPLETE) {
+        this.openFloodFolio();
+      } else {
+        this.state.status = "signal";
+        this.story("Stacks clear", "The Switchkeeper is down. Finish any remaining scans with your recalled partner.");
+      }
+      return;
+    }
     if (this.mission === "bayrelay") {
       if (this.state.readerMask === BAY_RELAY_CALLS_COMPLETE) {
         this.finish();
@@ -836,6 +860,10 @@ export class MissionRoom extends GameRoom {
     return entry.connected && player.hp > 0 && !player.armed && player.y === 0 && !player.move && !player.stagger;
   }
 
+  private hasMovementInput(entry: Entry) {
+    return this.state.frame - entry.at <= 24 && (entry.input.x !== 0 || entry.input.z !== 0);
+  }
+
   private canReachDowned(entry: Entry, target: Entry) {
     return target.connected && !target.player.hp && !target.rescued
       && rescueDistance(entry.player, target.player) <= RESCUE_RANGE;
@@ -846,8 +874,7 @@ export class MissionRoom extends GameRoom {
       const rescue = entry.rescue;
       if (!rescue) continue;
       const { target, start } = rescue;
-      const moving = this.state.frame - entry.at <= 24 && (entry.input.x !== 0 || entry.input.z !== 0);
-      if (!canRescueIn(this.state.status) || !this.canAssist(entry) || moving || entry.input.action
+      if (!canRescueIn(this.state.status) || !this.canAssist(entry) || this.hasMovementInput(entry) || entry.input.action
         || !this.players.has(target.player.id) || !this.canReachDowned(entry, target)) {
         entry.rescue = undefined;
         continue;
@@ -914,6 +941,8 @@ export class MissionRoom extends GameRoom {
       }
     } else if (this.mission === "bellhouse") {
       this.interactBellhouse(entry, point);
+    } else if (this.mission === "flood") {
+      this.interactFlood(entry, point);
     } else if (this.mission === "bayrelay") {
       this.interactBayRelay(entry, point);
     } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register"
@@ -1250,6 +1279,67 @@ export class MissionRoom extends GameRoom {
     }
     rosterCase.carrier = "";
     this.broadcast("notice", notice);
+  }
+
+  private interactFlood(entry: Entry, point: Marker) {
+    const { status, stage, indexScans, readerMask } = this.state;
+    if (status !== "signal" && status !== "combat") return;
+    if (!point.readerBit) {
+      if (stage === 3 && this.hearSignal(entry, point, "Recall your partner with Q first.")) this.finish();
+      return;
+    }
+    if (readerMask & point.readerBit) {
+      entry.client.send("notice", point.title + " is already saved.");
+      return;
+    }
+    if (indexScans.has(point.id)) {
+      entry.client.send("notice", point.title + " is already reading.");
+      return;
+    }
+    if (!this.canAssist(entry) || this.hasMovementInput(entry) || entry.input.action) {
+      entry.client.send("notice", "Recall your partner and stand still to scan.");
+      return;
+    }
+    if ([...indexScans.values()].some(({ courier }) => courier === entry.player.id)) return;
+    indexScans.set(point.id, new IndexScanState().assign({ courier: entry.player.id, until: this.state.frame + FLOOD_SCAN_TICKS }));
+    if (stage === 1) {
+      this.state.stage = 2;
+      this.spawn(floodWaves[1]);
+      this.story("The Switchkeeper hears the reader", "Hold still until your partner finishes the scan. Each saved entry briefly staggers the Switchkeeper. You can also clear it first and read in peace.");
+    }
+  }
+
+  private stepIndexScans() {
+    for (const [id, scan] of this.state.indexScans) {
+      const entry = this.players.get(scan.courier);
+      const bank = FLOOD_INDEX_BANKS.find((point) => point.id === id);
+      if (!entry || !bank || !this.canAssist(entry) || entry.rescue || this.hasMovementInput(entry) || entry.input.action
+        || !nearestMarker([bank], entry.player.x, entry.player.z)) {
+        this.state.indexScans.delete(id);
+        if (entry?.connected) entry.client.send("notice", "Scan interrupted. Stand still to try again.");
+        continue;
+      }
+      if (this.state.frame < scan.until) continue;
+      this.state.indexScans.delete(id);
+      this.state.readerMask |= bank.readerBit;
+      this.events.push({ type: "observe", source: entry.player.id, x: bank.x, z: bank.z });
+      for (const enemy of this.enemies.values()) {
+        if (!enemy.hp || enemy.kind !== "keeper") continue;
+        const remainingRecovery = enemy.phase === "hurt" || enemy.phase === "recover" ? enemy.ticks : 0;
+        enemy.ticks = Math.max(remainingRecovery, FLOOD_GUARD_STAGGER_TICKS);
+        enemy.phase = "hurt";
+        enemy.target = "";
+        this.events.push({ type: "interrupt", source: enemy.id, x: enemy.x, z: enemy.z });
+      }
+      this.broadcast("notice", bank.title + " saved.");
+      if (this.state.status === "signal" && this.state.readerMask === FLOOD_INDEX_COMPLETE) this.openFloodFolio();
+    }
+  }
+
+  private openFloodFolio() {
+    this.state.stage = 3;
+    this.state.status = "signal";
+    this.story("Both entries matched", "The saved records match the Bellhouse roster. Recall your partner at the Flood Folio to take the accession card.");
   }
 
   private finish() {

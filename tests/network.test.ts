@@ -17,7 +17,7 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
 import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
 import { ANNEX_CASE_HOME, ANNEX_FILING_DESK, ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, BELLHOUSE_CALLS,
-  BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS,
+  BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, FLOOD_FOLIO, FLOOD_INDEX_BANKS, FLOOD_INDEX_COMPLETE, FLOOD_SCAN_TICKS,
   LIFT_LEG_TICKS, LIFT_PHASE, PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE,
   type BellhouseCue, VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
 
@@ -1817,6 +1817,147 @@ test("Registry Annex shares a recoverable case and requires both the patrol and 
       assert.equal(profile.bond, initial[index].bond + 6);
       assert.deepEqual(profile.lore, [...initial[index].lore, "annex"]);
       assert.deepEqual(profile.clears, [...initial[index].clears, "annex"]);
+    }
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("Flood Index isolates concurrent scans and unlocks the folio only after both banks and the Keeper", { timeout: 80000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    const party = [alpha, beta];
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      server.store.reward([id], "bellhouse-unlock", "bellhouse");
+      if (account !== guest) server.store.reward([id], "annex-unlock", "annex");
+    }
+    const initial = await Promise.all(party.map((account) => account.profile()));
+    await assert.rejects(guest.sdk.create("mission", { mission: "flood" }), /Clear Registry Annex/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "flood" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear Registry Annex/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const [crew, transfer] = FLOOD_INDEX_BANKS;
+    const phase = (stage: number, status: string, mask: number) => rooms.every((room) =>
+      room.state.stage === stage && room.state.status === status && room.state.readerMask === mask);
+    const scanCount = (count: number) => rooms.every((room) => room.state.indexScans.size === count);
+    const scan = (bank: string, courier: TestCourier, deadline: number) => rooms.every((room) => {
+      const pending = room.state.indexScans.get(bank);
+      return pending?.courier === courier.room.sessionId && pending?.until === deadline;
+    });
+    const startScan = async (bank: string, courier: TestCourier) => {
+      courier.room.send("interact");
+      const deadline = await until("both clients see the scan holder and deadline", () => {
+        const untilTick = first.state.indexScans.get(bank)?.until;
+        return untilTick && scan(bank, courier, untilTick) ? untilTick : undefined;
+      });
+      const ticks = deadline - first.state.frame;
+      assert.ok(ticks > FLOOD_SCAN_TICKS - 18 && ticks <= FLOOD_SCAN_TICKS);
+      return deadline;
+    };
+    const interactAndSync = async (courier: TestCourier) => {
+      courier.room.send("interact");
+      courier.send(0, 0);
+      await until("the room acknowledges the scan attempt", () => courier.me.ack === courier.seq);
+    };
+    const parkAt = async (courier: TestCourier, spot: { x: number; z: number }) => {
+      await courier.go(spot.x, spot.z);
+      await recallForReader(courier);
+      await until("the scanner is stationary", () => courier.me.ack === courier.seq && !courier.me.moving);
+    };
+    const foes = (room: Socket) => [...room.state.actors.values()].filter((actor) => actor.kind !== "player" && actor.hp > 0);
+    const hits = rooms.map((room) => {
+      const events: CombatEvent[] = [];
+      room.onMessage("combat", (event: CombatEvent) => { if (event.type === "hit") events.push(event); });
+      return events;
+    });
+
+    first.send("begin");
+    await until("both couriers enter Flood Index", () => phase(0, "combat", 0));
+    for (const room of rooms) assert.deepEqual(foes(room).map((foe) => foe.kind).sort(), ["runner", "skitter"]);
+    await fight([a, b], "signal", 24000);
+    await until("both banks become available", () => phase(1, "signal", 0));
+    assert.ok(a.me.hp > 0 && b.me.hp > 25);
+    await Promise.all([a.go(crew.x, crew.z), parkAt(b, { x: crew.x + .65, z: crew.z })]);
+    await until("Aster is idle at Crew Index", () => a.me.phase === "idle");
+    if (!a.me.armed) a.send(0, 0, "morph");
+    await until("Aster has a weapon drawn", () => a.me.armed && a.me.phase === "idle");
+    await interactAndSync(a);
+    assert.ok(phase(1, "signal", 0) && scanCount(0), "an armed attempt cannot start the scan or fight");
+    await parkAt(a, crew);
+
+    const firstDeadline = await startScan(crew.id, a);
+    assert.ok(phase(2, "combat", 0));
+    for (const room of rooms) assert.deepEqual(foes(room).map((foe) => foe.kind), ["keeper"]);
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    const [keeper] = mission["enemies"].values();
+    const spawn = { x: keeper.x, z: keeper.z, facing: keeper.facing };
+    // Hold the full-health Keeper while checking the two stations, then let it fight normally.
+    Object.assign(keeper, { phase: "recover", ticks: 1200, target: "" });
+    await interactAndSync(b);
+    assert.ok(scanCount(1) && scan(crew.id, a, firstDeadline), "another courier cannot steal or extend a live scan");
+    a.send(1, 0);
+    await until("movement cancels the Crew scan", () => scanCount(0) && a.me.ack === a.seq);
+    assert.ok(first.state.frame < firstDeadline && phase(2, "combat", 0));
+    a.send(0, 0);
+    await Promise.all([parkAt(a, crew), parkAt(b, transfer)]);
+    await until("the canceled scan's old deadline has passed", () => first.state.frame >= firstDeadline);
+    assert.ok(phase(2, "combat", 0) && scanCount(0));
+
+    const transferDeadline = await startScan(transfer.id, b);
+    const crewDeadline = await startScan(crew.id, a);
+    assert.ok(scanCount(2) && scan(transfer.id, b, transferDeadline) && scan(crew.id, a, crewDeadline));
+    const target = mission["players"].get(other.sessionId)!.player;
+    const beforeHit = b.me.hp;
+    Object.assign(keeper, { x: target.x + 1.1, z: target.z, facing: -1, phase: "windup", ticks: 8, target: other.sessionId });
+    await until("the Keeper hit cancels only the Transfer scan", () => scanCount(1) && scan(crew.id, a, crewDeadline)
+      && hits.every((feed) => feed.some((event) => event.source === keeper.id && event.target === other.sessionId && event.damage === 25)));
+    assert.equal(b.me.hp, beforeHit - 25);
+    assert.ok(first.state.frame < transferDeadline && phase(2, "combat", 0));
+    Object.assign(keeper, { phase: "recover", ticks: Math.max(1, crewDeadline - mission.state.frame + 10), target: "" });
+    await until("the uninterrupted Crew scan is credited at its deadline", () => first.state.frame >= crewDeadline
+      && phase(2, "combat", crew.readerBit!) && scanCount(0));
+    for (const room of rooms) {
+      const enemy = room.state.actors.get(keeper.id)!;
+      assert.equal(enemy.hp, enemy.maxHp, "scan completion does not damage the Keeper");
+      assert.equal(enemy.phase, "hurt");
+      assert.ok(enemy.age > 42 - 12 && enemy.age <= 42);
+    }
+    assert.equal(b.me.hp, beforeHit - 25, "scan completion does not refill the party");
+
+    Object.assign(keeper, spawn);
+    await fight([a, b], "signal", 33000);
+    await until("beating the Keeper still leaves the second bank to scan", () => phase(2, "signal", crew.readerBit!) && scanCount(0));
+    assert.ok(rooms.every((room) => foes(room).length === 0));
+    const reader = b.me.hp > 0 ? b : a;
+    await parkAt(reader, transfer);
+    const finalDeadline = await startScan(transfer.id, reader);
+    await until("both completed banks and the defeated Keeper open the Flood Folio", () => first.state.frame >= finalDeadline
+      && phase(3, "signal", FLOOD_INDEX_COMPLETE) && scanCount(0));
+    assert.deepEqual(await Promise.all(party.map((account) => account.profile())), initial);
+
+    await parkAt(reader, FLOOD_FOLIO);
+    reader.room.send("interact");
+    reader.room.send("interact");
+    await until("both clients see one folio clear", () => phase(3, "complete", FLOOD_INDEX_COMPLETE));
+    for (const [index, account] of party.entries()) {
+      const profile = await account.profile();
+      assert.equal(profile.companion, initial[index].companion);
+      assert.equal(profile.battleXp, initial[index].battleXp + 48);
+      assert.equal(profile.bond, initial[index].bond + 6);
+      assert.deepEqual(profile.lore, [...initial[index].lore, "flood"]);
+      assert.deepEqual(profile.clears, [...initial[index].clears, "flood"]);
     }
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));

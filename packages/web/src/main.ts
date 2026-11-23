@@ -8,16 +8,17 @@ import {
   DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW,
   type DispatchInvitation, type DispatchInviteRequest, type DispatchRecentCrew,
 } from "../../shared/src/dispatch.ts";
-import { annexCaseAction, BELLHOUSE_CALLS, LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers,
-  TERMINAL_READERS_COMPLETE, type BellhouseCue } from "../../shared/src/scene.ts";
+import { annexCaseAction, BELLHOUSE_CALLS, FLOOD_INDEX_BANKS, LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers,
+  TERMINAL_READERS_COMPLETE, type BellhouseCue, type IndexScan } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
 import { CompanionRoomPlay } from "./companion-room-play.ts";
 import "./style.css";
 
-type Wire = Omit<WorldView, "actors"> & {
+type Wire = Omit<WorldView, "actors" | "indexScans"> & {
   actors: { forEach(callback: (actor: ViewActor, id: string) => void): void };
   crewAssists: Iterable<CrewAssist>;
+  indexScans?: { size: number; forEach(callback: (scan: IndexScan, id: string) => void): void };
 };
 type RelayRoom = Room<any, Wire>;
 type Panel = "" | "dispatch" | "lobby" | "room" | "room-play" | "workbench" | "confirm";
@@ -122,6 +123,8 @@ function markers() {
 
 function capture(state: Wire) {
   const actors = new Map<string, ViewActor>();
+  const indexScans = state.indexScans?.size ? new Map<string, IndexScan>() : undefined;
+  if (indexScans) state.indexScans?.forEach(({ courier, until }, id) => indexScans.set(id, { courier, until }));
   state.actors.forEach((entry, id) => {
     actors.set(id, {
       x: entry.x, y: entry.y, z: entry.z, facing: entry.facing, name: entry.name, companion: entry.companion,
@@ -137,7 +140,7 @@ function capture(state: Wire) {
     kind: state.kind, mission: state.mission, status: state.status, code: state.code, leader: state.leader,
     stage: state.stage, wave: state.wave, readerMask: state.readerMask, readerUntil: state.readerUntil,
     rosterCase: state.rosterCase && { x: state.rosterCase.x, z: state.rosterCase.z, carrier: state.rosterCase.carrier, filed: state.rosterCase.filed },
-    frame: state.frame, practice: state.practice, actors,
+    frame: state.frame, practice: state.practice, actors, indexScans,
   };
 }
 
@@ -504,6 +507,7 @@ function signalObjective(world: WorldView) {
     : "Recall your companion and use the Intake Control.";
   if (world.mission === "bellhouse") return bellhouseObjective(world);
   if (world.mission === "annex") return annexObjective(world);
+  if (world.mission === "flood") return floodObjective(world);
   if (world.mission === "bayrelay") return bayRelayObjective(world);
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
@@ -580,6 +584,17 @@ function annexPrompt(world: WorldView, actor: ViewActor) {
   }
 }
 
+function floodObjective(world: WorldView) {
+  if (world.stage === 0) return "Clear the lower archive patrol.";
+  if (world.stage === 3) return "Recall your companion and read the Flood Folio.";
+  const courierId = room?.sessionId;
+  const ownScan = courierId ? FLOOD_INDEX_BANKS.find(({ id }) => world.indexScans?.get(id)?.courier === courierId) : undefined;
+  if (ownScan) return "Hold still at the " + ownScan.title + ".";
+  const saved = FLOOD_INDEX_BANKS.filter(({ readerBit }) => world.readerMask & readerBit).length;
+  if (saved === FLOOD_INDEX_BANKS.length) return "Both records saved. Defeat the Switchkeeper.";
+  return `Scan both banks with your companion recalled (${saved}/${FLOOD_INDEX_BANKS.length}).`;
+}
+
 function stationPrompt(world: WorldView, actor: ViewActor) {
   if (!actor.hp) return "";
   if (world.mission === "annex") return annexPrompt(world, actor);
@@ -606,6 +621,12 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
     if (world.status !== "combat" && world.status !== "signal") return "";
     if (point.readerBit && (world.readerMask & point.readerBit)) return point.title + " • Answered";
   }
+  if (world.mission === "flood") {
+    if (world.status !== "combat" && world.status !== "signal") return "";
+    if (point.readerBit && (world.readerMask & point.readerBit)) return point.title + " • Saved";
+    const scan = world.indexScans?.get(point.id);
+    if (scan) return point.title + (scan.courier === room?.sessionId ? " • Stay still" : " • Reading");
+  }
   if (world.mission === "viaduct" && world.stage === 1) {
     const seconds = readerSeconds(world);
     if (point.id === "viaduct-west" && seconds > 0) return "West Relay • Sending to East Relay";
@@ -613,7 +634,8 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
   }
   if (world.mission === "lift" && world.status !== "signal"
     && !(world.status === "combat" && world.readerMask === LIFT_PHASE.jammed)) return "";
-  const recall = world.mission === "archive" || world.mission === "bayrelay" || world.mission === "lift" || world.mission === "bellhouse"
+  const recall = world.mission === "archive" || world.mission === "bayrelay" || world.mission === "lift"
+    || world.mission === "bellhouse" || world.mission === "flood"
     || world.status === "signal" && (world.mission === "terminal"
     || world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct" || world.mission === "pump"
     || point.id === "register" || point.id === "signal" && world.mission === "return");
@@ -661,6 +683,7 @@ function updateHUD(actor?: ViewActor) {
         : world.mission === "pump" ? pumpCombatObjective(world)
         : world.mission === "bellhouse" ? bellhouseObjective(world)
         : world.mission === "annex" ? annexObjective(world)
+        : world.mission === "flood" ? floodObjective(world)
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: world.mission === "departure" ? "The Switchkeeper is staggered. A Cable Runner is coming from the west."
         : world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",

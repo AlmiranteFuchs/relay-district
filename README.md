@@ -1,6 +1,6 @@
 # Relay District
 
-Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore twelve story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
+Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore thirteen story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
 
 ## Run the game
 
@@ -52,6 +52,8 @@ After Floodgate Lift, take **Pump Court**. Clear the patrol and use the Intake C
 After Pump Court, take **Bellhouse**. Recall your companion and answer the calls for Spindle, Nacre, and Pith in any order. The first call draws the guard into the hall. You can answer the other calls during the fight or after the guard is down. Read the signed roster to unlock the wearable **Bellhouse Seal**. The journal's **Hear the bells** button plays the three calls again in the companion room.
 
 After Bellhouse, take **Registry Annex**. Clear the west intake and pick up the red Roster Case with **E**. A hit drops the case, and any courier can recover it. The carrier can also press **E** away from the desk to set it down for a handoff. Bring the case to the east Records Desk and recall your companion to file it. The receipt goes into the party's journals once the guard is also down.
+
+After Registry Annex, take **Flood Index**. Recall your companion and press **E** at either bank. Hold still until the reader finishes. A hit or movement interrupts the scan, and a completed scan briefly staggers the Switchkeeper. Crewmates can cover you or read both banks at once. You can also finish the scans after the fight. Read the Flood Folio when both entries are saved and the Switchkeeper is down.
 
 Clear East Terminal to unlock **Terminal Watch** in Dispatch. This repeatable contract has two patrols and awards 28 battle XP per clear. Keep the whole party on its feet through both patrols to unlock the **Signal Tag**, which you can equip in the companion room. A rescue can save the run after a knockdown.
 

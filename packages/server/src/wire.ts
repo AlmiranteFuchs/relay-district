@@ -1,6 +1,6 @@
 import { ArraySchema, defineTypes, MapSchema, Schema } from "@colyseus/schema";
 import type { CrewAssist } from "../../shared/src/crew-assists.ts";
-import type { RosterCase } from "../../shared/src/scene.ts";
+import type { IndexScan, RosterCase } from "../../shared/src/scene.ts";
 
 export class ActorState extends Schema {
   declare x: number;
@@ -75,6 +75,16 @@ export class RosterCaseState extends Schema implements RosterCase {
 }
 defineTypes(RosterCaseState, { x: "float32", z: "float32", carrier: "string", filed: "boolean" });
 
+export class IndexScanState extends Schema implements IndexScan {
+  declare courier: string;
+  declare until: number;
+  constructor() {
+    super();
+    Object.assign(this, { courier: "", until: 0 });
+  }
+}
+defineTypes(IndexScanState, { courier: "string", until: "uint32" });
+
 export class GameState extends Schema {
   declare kind: string;
   declare mission: string;
@@ -90,11 +100,12 @@ export class GameState extends Schema {
   declare actors: MapSchema<ActorState>;
   declare crewAssists: ArraySchema<CrewAssistState>;
   declare rosterCase?: RosterCaseState;
+  declare indexScans: MapSchema<IndexScanState>;
   constructor() {
     super();
     Object.assign(this, { kind: "plaza", mission: "", status: "plaza", code: "", leader: "",
       stage: 0, wave: 0, readerMask: 0, readerUntil: 0, frame: 0, practice: false, actors: new MapSchema<ActorState>(),
-      crewAssists: new ArraySchema<CrewAssistState>() });
+      crewAssists: new ArraySchema<CrewAssistState>(), indexScans: new MapSchema<IndexScanState>() });
   }
 }
 defineTypes(GameState, {
@@ -102,4 +113,5 @@ defineTypes(GameState, {
   stage: "uint8", wave: "uint8", readerMask: "uint8", readerUntil: "uint32", frame: "uint32", practice: "boolean", actors: { map: ActorState },
   crewAssists: { array: CrewAssistState },
   rosterCase: RosterCaseState,
+  indexScans: { map: IndexScanState },
 });
