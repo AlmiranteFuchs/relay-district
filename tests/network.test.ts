@@ -8,6 +8,8 @@ import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
 import { BAY_FOUR_TICKET, RELAY_PENNANT, type Action, type Family, type Mission, type Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
+import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
+  type CompanionPlayMessage, type CompanionPlayRequest, type Signal } from "../packages/shared/src/companion-play.ts";
 import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, DEPARTURE_REINFORCEMENT_TICKS,
@@ -299,6 +301,115 @@ test("Dispatch remembers the last started crew across plaza sessions and keeps i
     try {
       assert.deepEqual(await hostLookup.request(), { targets: [] });
     } finally { t.mock.restoreAll(); }
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("Signal Echo resolves private rounds once and shares the companion-care cooldown", { timeout: 25000 }, async (t) => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  type Round = Extract<CompanionPlayMessage, { type: "round" }>;
+  type Result = Extract<CompanionPlayMessage, { type: "result" }>;
+  const echo = (room: Socket) => {
+    const rounds: Round[] = [];
+    const results: Result[] = [];
+    room.onMessage(COMPANION_PLAY, (message: CompanionPlayMessage) => {
+      if (message.type === "round") rounds.push(message);
+      else results.push(message);
+    });
+    return {
+      rounds,
+      results,
+      async start(requestId: number) {
+        room.send(COMPANION_PLAY, { type: "start", requestId } satisfies CompanionPlayRequest);
+        const round = await until("the private four-cue round arrives", () => rounds.find((item) => item.requestId === requestId));
+        assert.equal(round.signals.length, SIGNAL_COUNT);
+        assert.deepEqual(new Set(round.signals), new Set(["short", "long"]));
+        return round;
+      },
+      answer(round: Round, signals = round.signals) {
+        room.send(COMPANION_PLAY, { type: "answer", roundId: round.roundId, signals } satisfies CompanionPlayRequest);
+      },
+      result(round: Round) {
+        return until("the round result arrives", () => results.find((item) => item.roundId === round.roundId));
+      },
+    };
+  };
+  try {
+    const [alpha, beta] = await Promise.all([player(origin, "Aster"), player(origin, "Beta")]);
+    const betaId = server.store.session(beta.sdk.auth.token)!.id;
+    server.store.reward([betaId], "companion-play-fixture", "chapter");
+    const [beforeAlpha, beforeBeta] = await Promise.all([alpha.profile(), beta.profile()]);
+    const first = connectHandlers(await alpha.sdk.create("plaza") as Socket);
+    rooms.push(first);
+    const other = connectHandlers(await beta.sdk.joinById(first.roomId) as Socket);
+    rooms.push(other);
+    await Promise.all(rooms.map(local));
+    const a = echo(first), b = echo(other);
+
+    const superseded = await a.start(1);
+    const [current, remote] = await Promise.all([a.start(2), b.start(1)]);
+    assert.notEqual(superseded.roundId, current.roundId);
+    assert.notEqual(current.roundId, remote.roundId);
+    first.send(COMPANION_PLAY, { type: "start", requestId: 0 });
+    a.answer(current);
+    await delay(120);
+    assert.deepEqual(a.results, []);
+    assert.deepEqual(await alpha.profile(), beforeAlpha);
+    assert.deepEqual(a.rounds, [superseded, current]);
+    assert.deepEqual(b.rounds, [remote]);
+
+    await delay(SIGNAL_PLAYBACK_MS);
+    a.answer(superseded);
+    a.answer(remote);
+    first.send(COMPANION_PLAY, { type: "answer", roundId: current.roundId, signals: [...current.signals, "short"] });
+    first.send(COMPANION_PLAY, { type: "answer", roundId: current.roundId, signals: ["wide", ...current.signals.slice(1)] });
+    a.answer(current);
+    assert.deepEqual(await a.result(current), { type: "result", roundId: current.roundId, outcome: "matched", bondAdded: true });
+    assert.deepEqual(await alpha.profile(), { ...beforeAlpha, bond: beforeAlpha.bond + 1 });
+    assert.equal(a.results.length, 1);
+    assert.deepEqual(b.results, []);
+
+    const wrong: Signal[] = [...remote.signals];
+    wrong[0] = wrong[0] === "short" ? "long" : "short";
+    b.answer(remote, wrong);
+    assert.deepEqual(await b.result(remote), { type: "result", roundId: remote.roundId, outcome: "missed", bondAdded: false });
+    assert.deepEqual(await beta.profile(), beforeBeta);
+    b.answer(remote);
+
+    a.answer(current);
+    const cooldown = await a.start(3);
+    assert.equal(a.results.length, 1);
+    let played: Profile | undefined;
+    first.onMessage("profile", (profile: Profile) => { played = profile; });
+    first.send("customize", { play: true });
+    assert.deepEqual(await until("ordinary care returns the shared cooldown's profile", () => played),
+      { ...beforeAlpha, bond: beforeAlpha.bond + 1 });
+    await delay(SIGNAL_PLAYBACK_MS);
+    a.answer(cooldown);
+    assert.deepEqual(await a.result(cooldown), { type: "result", roundId: cooldown.roundId, outcome: "matched", bondAdded: false });
+    assert.deepEqual(await alpha.profile(), { ...beforeAlpha, bond: beforeAlpha.bond + 1 });
+
+    const canceled = await a.start(4);
+    first.send(COMPANION_PLAY, { type: "cancel", roundId: canceled.roundId } satisfies CompanionPlayRequest);
+    const expired = await b.start(2);
+    assert.equal(b.results.length, 1);
+    const realNow = Date.now.bind(Date);
+    t.mock.method(Date, "now", () => realNow() + SIGNAL_ROUND_MS + 1);
+    try {
+      a.answer(canceled);
+      await a.start(5);
+      assert.equal(a.results.length, 2);
+      b.answer(expired);
+      assert.deepEqual(await b.result(expired), { type: "result", roundId: expired.roundId, outcome: "expired", bondAdded: false });
+      b.answer(expired);
+      await b.start(3);
+      assert.equal(b.results.length, 2);
+    } finally { t.mock.restoreAll(); }
+    assert.deepEqual(await beta.profile(), beforeBeta);
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

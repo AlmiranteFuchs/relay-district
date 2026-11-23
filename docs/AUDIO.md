@@ -25,7 +25,7 @@ export const AUDIO_REPLACEMENTS: AudioReplacements = {
 | `hit` | Confirmed contact |
 | `windup` | Enemy attack warning |
 | `dodge` | Directional dodge |
-| `observe` | Companion observation, care, or completed rescue |
+| `observe` | Companion observation, care, completed rescue, and the two playback speeds in Signal Echo. Keep the one-shot short enough to finish between pulses. |
 | `clear` | Mission clear |
 | `departure` | Play together in the companion room after First Departure |
 | `lane` and `fight` | Synchronized approach and battle stems |

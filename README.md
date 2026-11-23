@@ -49,7 +49,7 @@ Clear First Departure to unlock **Bay Four Relay** in Dispatch. Use West Call an
 
 The companion keeps its name, personality, bond, trinket, room theme, memories, former forms, and mastery records through a morph. Battle XP starts at zero for the new form. Its basic chain and signature skill are available immediately. Complete a mastery drill and reach rank three to use the follow-up. Earn another catalyst by clearing two distinct missions and carry one at a time.
 
-In the companion room, rename your partner, decorate its room, choose a keepsake, and play together. Inspect the closure plaque, maintenance log, and broken announcement to record the history of the Last Crossing. Open Sound to hear the original score and gameplay cues.
+In the companion room, rename your partner, decorate its room, choose a keepsake, and play together. Choose **Signal Echo** to copy four short and long pulses from your partner. The cues appear on screen and play with Sound enabled. A match can add one bond through the usual care cooldown. You can retry a missed pattern without losing progress. Inspect the closure plaque, maintenance log, and broken announcement to record the history of the Last Crossing. Open Sound to hear the original score and gameplay cues.
 
 In co-op, recall your companion with **Q** if it is armed, stand beside a downed teammate, and press **E**. Stay still for 1.2 seconds while your companion revives them with 40 HP. Taking a hit, moving, or using another action interrupts the rescue. Each courier can receive one rescue per run.
 

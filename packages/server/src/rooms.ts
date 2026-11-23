@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import { matchMaker, Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
   battleRank, BAY_FOUR_TICKET, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, RELAY_PENNANT, SIGNAL_TAG, TICK_RATE,
@@ -6,6 +6,8 @@ import {
 } from "../../shared/src/content.ts";
 import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
+import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
+  type CompanionPlayMessage, type Signal } from "../../shared/src/companion-play.ts";
 import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
@@ -55,6 +57,12 @@ interface Entry {
   ack: number;
   rescued?: boolean;
   rescue?: { target: Entry; start: number };
+}
+
+interface SignalRound {
+  id: string;
+  signals: Signal[];
+  startedAt: number;
 }
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -223,9 +231,11 @@ export class GameRoom extends Room<{ state: GameState }> {
 
 export class PlazaRoom extends GameRoom {
   maxClients = 16;
+  private readonly signalRounds = new WeakMap<Entry, SignalRound>();
 
   onCreate() {
     this.install();
+    this.onMessage(COMPANION_PLAY, (client, raw: unknown) => this.playSignalEcho(client, raw));
     this.onMessage(DISPATCH_INVITE, (client, raw: unknown) => this.sendDispatchInvites(client, raw));
     this.onMessage(DISPATCH_RECENT_CREW, (client) => this.sendRecentCrew(client));
     this.onMessage("customize", (client, raw: unknown) => {
@@ -254,6 +264,49 @@ export class PlazaRoom extends GameRoom {
       client.send("notice", result.notice);
       if (result.ok) this.broadcast("combat", { type: "arm", source: entry.player.id, x: entry.player.x, z: entry.player.z });
     });
+  }
+
+  private playSignalEcho(client: Client, raw: unknown) {
+    const entry = this.players.get(client.sessionId);
+    if (!entry?.connected) return;
+    const request = asRecord(raw);
+    if (request.type === "start") {
+      const { requestId } = request;
+      if (typeof requestId !== "number" || !Number.isSafeInteger(requestId) || requestId <= 0) return;
+      const pattern = randomInt(1, 2 ** SIGNAL_COUNT - 1);
+      const signals = Array.from({ length: SIGNAL_COUNT }, (_, index): Signal => pattern & (1 << index) ? "long" : "short");
+      const round = { id: randomUUID(), signals, startedAt: Date.now() };
+      this.signalRounds.set(entry, round);
+      client.send(COMPANION_PLAY, { type: "round", requestId, roundId: round.id, signals } satisfies CompanionPlayMessage);
+      return;
+    }
+
+    const round = this.signalRounds.get(entry);
+    if (!round || request.roundId !== round.id) return;
+    if (request.type === "cancel") {
+      this.signalRounds.delete(entry);
+      return;
+    }
+    const { signals } = request;
+    if (request.type !== "answer" || !Array.isArray(signals) || signals.length !== SIGNAL_COUNT
+      || !signals.every((signal: unknown) => signal === "short" || signal === "long")) return;
+    const now = Date.now();
+    const elapsed = now - round.startedAt;
+    if (elapsed < SIGNAL_PLAYBACK_MS) return;
+    this.signalRounds.delete(entry);
+
+    let outcome: "matched" | "missed" | "expired" = "missed";
+    let bondAdded = false;
+    if (elapsed >= SIGNAL_ROUND_MS) {
+      outcome = "expired";
+    } else if (round.signals.every((signal, index) => signal === signals[index])) {
+      outcome = "matched";
+      const before = store.profile(entry.profileId).bond;
+      const profile = store.customize(entry.profileId, { play: true }, now);
+      bondAdded = profile.bond > before;
+      this.applyProfile(entry, profile);
+    }
+    client.send(COMPANION_PLAY, { type: "result", roundId: round.id, outcome, bondAdded } satisfies CompanionPlayMessage);
   }
 
   private sendDispatchInvites(client: Client, raw: unknown) {

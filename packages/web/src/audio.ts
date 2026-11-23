@@ -1,4 +1,5 @@
 import type { CombatEvent } from "../../shared/src/combat.ts";
+import type { Signal } from "../../shared/src/companion-play.ts";
 import { loadAudioAssets } from "./audio-assets.ts";
 
 interface MusicStem {
@@ -109,7 +110,12 @@ export class GameAudio {
     bed.setTargetAtTime(bedLevel, this.resumeBedAt, .21);
   }
 
-  sound(type: CombatEvent["type"] | "departure") {
+  signal(kind: Signal) {
+    if (this.enabled && this.context) this.leaveRoomForCue(this.context.currentTime, .48, .54);
+    this.sound("observe", kind === "short" ? 1.32 : .78);
+  }
+
+  sound(type: CombatEvent["type"] | "departure", rate = 1) {
     const audio = this.context;
     const clip = this.buffers.get(type === "revive" ? "observe" : type);
     if (!audio || !this.enabled || !clip || !this.effects) return;
@@ -122,7 +128,9 @@ export class GameAudio {
     if (type === "departure") this.leaveRoomForCue(audio.currentTime, .86, .52);
     const source = audio.createBufferSource();
     const channel = audio.createGain();
-    source.buffer = clip; channel.gain.value = type === "windup" ? .67 : type === "hit" ? .55 : .47;
+    source.buffer = clip;
+    source.playbackRate.value = rate;
+    channel.gain.value = type === "windup" ? .67 : type === "hit" ? .55 : .47;
     source.connect(channel).connect(this.effects);
     source.start();
   }

@@ -1,4 +1,5 @@
 import { Client, type Room } from "@colyseus/sdk";
+import { COMPANION_PLAY, type CompanionPlayMessage } from "../../shared/src/companion-play.ts";
 import { ARM_TICKS, canRescueIn, DT, rescueDistance, RESCUE_RANGE, RESCUE_TICKS, stepWalk, type CombatEvent, type Input } from "../../shared/src/combat.ts";
 import { availableTrinkets, battleRank, FORMS, isFamily, isMission, JOBS, LORE, missionLockReason, ROOM_THEMES, type Action, type Family,
   type Mission, type Profile } from "../../shared/src/content.ts";
@@ -9,11 +10,12 @@ import {
 import { nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
+import { CompanionRoomPlay } from "./companion-room-play.ts";
 import "./style.css";
 
 type Wire = Omit<WorldView, "actors"> & { actors: { forEach(callback: (actor: ViewActor, id: string) => void): void } };
 type RelayRoom = Room<any, Wire>;
-type Panel = "" | "dispatch" | "lobby" | "room" | "workbench" | "confirm";
+type Panel = "" | "dispatch" | "lobby" | "room" | "room-play" | "workbench" | "confirm";
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
@@ -32,6 +34,7 @@ let world: WorldView | undefined;
 let room: RelayRoom | undefined;
 let profile: Profile;
 let panel: Panel = "";
+let companionPlay: CompanionRoomPlay | undefined;
 let targetFamily: Family = "moth";
 let busy = false;
 let connected = false;
@@ -181,6 +184,9 @@ function attach(next: RelayRoom) {
     profile = result;
     if (panel === "room" || panel === "workbench" || panel === "confirm" || panel === "dispatch") drawPanel();
   });
+  next.onMessage(COMPANION_PLAY, (message: CompanionPlayMessage) => {
+    if (room === next) companionPlay?.receive(message);
+  });
   next.onMessage("story", (result: { title: string; text: string }) => { if (room === next) story(result); });
   next.onMessage("notice", (message: string) => { if (room === next) notify(message); });
   next.onMessage(DISPATCH_INVITE, (invitation: DispatchInvitation) => {
@@ -210,6 +216,7 @@ function attach(next: RelayRoom) {
   next.onDrop(() => {
     if (room !== next) return;
     connected = false; pending = []; responsive = undefined; clearControls(); setConnection("Reconnecting");
+    companionPlay?.interrupt();
   });
   next.onReconnect(() => {
     if (room !== next) return;
@@ -272,8 +279,24 @@ function participantText() {
   return players.length + " / " + (world?.mission === "training" ? 1 : 4) + " • " + players.map((actor) => actor.name).join(", ");
 }
 
-function openPanel(value: Panel) { panel = value; clearControls(); drawPanel(); }
-function closePanel() { panel = ""; show("shade", false); canvas.focus({ preventScroll: true }); }
+function endCompanionPlay() {
+  companionPlay?.dispose();
+  companionPlay = undefined;
+}
+
+function openPanel(value: Panel) {
+  if (value === "room-play" && companionPlay) return;
+  endCompanionPlay();
+  panel = value;
+  clearControls();
+  drawPanel();
+}
+function closePanel() {
+  endCompanionPlay();
+  panel = "";
+  show("shade", false);
+  canvas.focus({ preventScroll: true });
+}
 const button = (label: string, action: string, disabled = false) =>
   '<button type="button" class="button" data-menu="' + action + '"' + (disabled ? " disabled" : "") + ">" + label + "</button>";
 const item = (title: string, info: string, actions = "") =>
@@ -325,6 +348,12 @@ function syncDispatchCrew() {
   if (summary.textContent !== count) summary.textContent = count;
 }
 
+function roomPortrait() {
+  const themeClass = profile.roomTheme === "Amber window" ? "amber" : profile.roomTheme === "Moss glass" ? "moss" : "";
+  return '<div class="room-portrait ' + themeClass + '"><img class="critter" src="/models/' + profile.family + '-portrait.png" alt="">'
+    + "<strong>" + escape(profile.companion) + "</strong><small>" + FORMS[profile.family].name + " • " + escape(profile.trinket) + "</small></div>";
+}
+
 function drawPanel() {
   if (!panel || !profile) return;
   let title = "";
@@ -356,21 +385,29 @@ function drawPanel() {
     }
   } else if (panel === "room") {
     title = escape(profile.companion) + "’s room";
-    const form = FORMS[profile.family];
-    const themeClass = profile.roomTheme === "Amber window" ? "amber" : profile.roomTheme === "Moss glass" ? "moss" : "";
-    body = '<div class="room-portrait ' + themeClass + '"><img class="critter" src="/models/' + profile.family + '-portrait.png" alt="">'
-      + "<strong>" + escape(profile.companion) + "</strong><small>" + form.name + " • " + escape(profile.trinket) + "</small></div>";
+    body = roomPortrait();
     body += "<p>Bond " + profile.bond + " • Battle rank " + battleRank(profile.battleXp) + " • " + profile.battleXp + " XP</p>";
     body += '<form id="customize" class="panel-grid"><label>Name <input name="companion" maxlength="20" value="' + escape(profile.companion) + '"></label>'
       + '<label>Trinket <select name="trinket">' + options(availableTrinkets(profile), profile.trinket) + "</select></label>"
       + '<label>Room <select name="roomTheme">' + options(ROOM_THEMES, profile.roomTheme) + '</select></label>'
       + '<div><button class="button">Save room</button> ' + button("Play together", "care") + "</div></form>";
+    body += '<div class="panel-grid">' + item("Signal Echo", "Listen to your partner and echo four pulses.",
+      button("Play Signal Echo", "signal-echo")) + "</div>";
     body += "<p class='quiet'>Favorite keepsake: the fare token. Former shapes: "
       + profile.history.map((family) => FORMS[family].name).join(" → ") + ".</p>";
     body += '<div class="panel-grid">' + (Object.keys(LORE) as (keyof typeof LORE)[]).map((id) => {
       const entry = LORE[id];
       return item(entry.title, escape(profile.lore.includes(id) ? entry.text : entry.hint));
     }).join("") + "</div>";
+  } else if (panel === "room-play") {
+    title = "Signal Echo";
+    body = roomPortrait()
+      + "<p>Watch your partner send four short or long pulses. Echo them in order when it's your turn.</p>"
+      + '<p id="signal-status" role="status" tabindex="-1">Ready when you are.</p>'
+      + '<div><button id="signal-start" type="button" class="button">Start round</button> '
+      + '<button id="signal-short" type="button" class="button" disabled>Short pulse</button> '
+      + '<button id="signal-long" type="button" class="button" disabled>Long pulse</button> '
+      + button("Back to room", "companion-room") + "</div>";
   } else if (panel === "workbench") {
     title = "Morph workbench";
     body = "<p>" + escape(profile.companion) + " • " + FORMS[profile.family].name + " • " + profile.battleXp + " battle XP</p><p>"
@@ -397,6 +434,13 @@ function drawPanel() {
     syncDispatchInvites();
   }
   show("shade", true);
+  if (panel === "room-play") {
+    companionPlay = new CompanionRoomPlay(element("panel-body"), profile.companion, (message) => {
+      if (!connected || !room || world?.kind !== "plaza") return false;
+      room.send(COMPANION_PLAY, message);
+      return true;
+    }, (signal) => audio.signal(signal));
+  }
 }
 
 function options(values: string[], selected: string) {
@@ -627,6 +671,8 @@ document.addEventListener("click", (event) => {
   if (action === "plaza") { void plaza(); return; }
   if (action === "begin") { room?.send("begin"); closePanel(); return; }
   if (action === "resume") { closePanel(); return; }
+  if (action === "signal-echo" && panel === "room") { openPanel("room-play"); return; }
+  if (action === "companion-room" && panel === "room-play") { openPanel("room"); return; }
   if (action === "care") {
     room?.send("customize", { play: true });
     const remembersDeparture = profile.lore.includes("departure");
