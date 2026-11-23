@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -122,6 +122,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "Mara released the twelve partners from the passenger list so the city could not close their return route. Each kept one half of its courier’s fare. Your partner sounds the same two pulses you heard at the sealed gate. The manifest is marked DELIVER TO TIDEGATE if a courier brings a matching token.",
     hint: "Open the manifest with both readers at East Terminal",
   },
+  archive: {
+    title: "Tidegate recording · 00:12",
+    text: "Mara, 00:12. The twelve passengers made it home. I routed their partners through Dead Line Exchange under a maintenance code. Authority locked the stairs from above. Keep listening for two pulses. The exchange still answers. Your partner taps the reply before the voice on the recording does.",
+    hint: "Recover the voice recording inside Tidegate Signal Archive",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -136,6 +141,10 @@ export const JOBS: Record<Mission, {
   terminal: {
     title: "East Terminal", description: "Match both halves of the fare, drive back the patrol, and recover the manifest.",
     clearLore: "manifest", requiresChapter: true, prerequisite: "return",
+  },
+  archive: {
+    title: "Tidegate Signal Archive", description: "Follow the manifest to Tidegate and recover the last voice message on the return line.",
+    clearLore: "archive", requiresChapter: true, prerequisite: "terminal",
   },
   watch: {
     title: "Terminal Watch",

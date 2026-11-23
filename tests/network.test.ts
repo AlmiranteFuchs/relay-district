@@ -8,7 +8,7 @@ import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
 import type { Action, Family, Mission, Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
-import { routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
+import { ARCHIVE_CHANNELS_COMPLETE, routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -465,6 +465,103 @@ test("a solo courier can use both East Terminal readers and clear the patrol", {
   } finally {
     try { await room?.leave(); }
     finally { await server.stop(); }
+  }
+});
+
+test("Tidegate archive reads only the live channel and shares its recording after defense", { timeout: 80000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      for (const mission of ["chapter", "night", "return"] as const) server.store.reward([id], mission, mission);
+      if (account !== guest) server.store.reward([id], "terminal", "terminal");
+    }
+    await assert.rejects(guest.sdk.create("mission", { mission: "archive" }), /Clear East Terminal/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "archive" }) as Socket);
+    rooms.push(first);
+    await assert.rejects(guest.sdk.joinById(first.roomId), /Clear East Terminal/);
+    const other = connectHandlers(await beta.sdk.joinById(first.roomId) as Socket);
+    rooms.push(other);
+    await Promise.all([local(first), local(other)]);
+
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const [consolePoint] = routeMarkers("archive", 0);
+    const [near, far] = routeMarkers("archive", 1);
+    const [recording] = routeMarkers("archive", 3);
+    const notices: string[] = [];
+    other.onMessage("notice", (notice: string) => { notices.push(notice); });
+    const observations: string[][] = rooms.map((room) => {
+      const sources: string[] = [];
+      room.onMessage("combat", (event: CombatEvent) => { if (event.type === "observe") sources.push(event.source); });
+      return sources;
+    });
+    const stage = (stage: number, status: string) => rooms.every((room) => room.state.stage === stage && room.state.status === status);
+    const recall = async (courier: TestCourier) => {
+      await until("reader operator stands idle", () => courier.me.phase === "idle");
+      if (courier.me.armed) courier.send(0, 0, "morph");
+      await until("operator recalls their partner", () => !courier.me.armed && courier.me.phase === "idle");
+    };
+
+    first.send("begin");
+    await until("both clients enter the archive", () => stage(0, "combat"));
+    await fight([a, b], "signal", 22000);
+    await Promise.all([a.go(consolePoint.x, consolePoint.z), b.go(far.x, far.z)]);
+    await recall(a);
+    if (!b.me.armed) b.send(0, 0, "morph");
+    await until("far operator has their weapon", () => b.me.armed);
+    first.send("interact");
+    await until("both clients see the near channel live", () => stage(1, "route") && rooms.every((room) => room.state.wave === 0));
+    other.send("interact");
+    await until("quiet far channel gives timing feedback", () => notices.some((notice) => notice.includes("near channel is live")));
+    assert.equal(first.state.readerMask, 0);
+    await Promise.all([
+      a.go(near.x, near.z),
+      until("both clients see the far channel take over", () => rooms.every((room) => room.state.wave === 1)),
+    ]);
+
+    other.send("interact");
+    await until("live far channel requires the recalled companion", () => notices.some((notice) => notice.includes("Recall your partner")));
+    assert.equal(first.state.readerMask, 0);
+    await recall(b);
+    other.send("interact");
+    await until("both clients see the far channel recorded first", () => rooms.every((room) => room.state.readerMask === far.readerBit));
+    other.send("interact");
+    await until("duplicate reading is rejected", () => notices.some((notice) => notice.includes("already recorded")));
+
+    const reconnecting = new Promise<void>((resolve) => other.onReconnect.once(resolve));
+    other.connection.close(4010, "test drop");
+    await Promise.race([reconnecting, delay(4200).then(() => { throw new Error("Reconnect did not settle"); })]);
+    await until("the recorded bit survives reconnect and the near channel opens", () =>
+      other.state.readerMask === far.readerBit && b.me.connected && rooms.every((room) => room.state.wave === 0), 8000);
+    first.send("interact");
+    await until("both scans open the defense", () => stage(2, "combat") &&
+      rooms.every((room) => room.state.readerMask === ARCHIVE_CHANNELS_COMPLETE));
+    for (const account of [alpha, beta]) assert.equal((await account.profile()).lore.includes("archive"), false);
+
+    await fight([a, b], "signal", 32000);
+    await until("both clients can access the recording", () => stage(3, "signal"));
+    const reader = a.me.hp > 0 ? a : b;
+    await reader.go(recording.x, recording.z);
+    await recall(reader);
+    reader.room.send("interact");
+    reader.room.send("interact");
+    await until("the whole party clears the archive", () => stage(3, "complete"));
+    for (const sources of observations) assert.deepEqual(sources, [first.sessionId, other.sessionId, first.sessionId, reader.room.sessionId]);
+    for (const account of [alpha, beta]) {
+      const profile = await account.profile();
+      assert.deepEqual(profile.clears, ["chapter", "night", "return", "terminal", "archive"]);
+      assert.deepEqual(profile.lore, ["register", "turnout", "manifest", "archive"]);
+      assert.equal(profile.battleXp, 256);
+      assert.equal(profile.bond, 28);
+    }
+    first.send("begin");
+    await until("replay resets both channels", () => stage(0, "combat") && rooms.every((room) => room.state.readerMask === 0));
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
   }
 });
 

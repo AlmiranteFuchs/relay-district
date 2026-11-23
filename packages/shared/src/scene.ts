@@ -1,4 +1,4 @@
-import type { Lore, Mission } from "./content.ts";
+import { TICK_RATE, type Lore, type Mission } from "./content.ts";
 
 export interface Marker { id: string; x: number; z: number; title: string; lore?: Lore; readerBit?: number }
 export const PLAZA: Marker[] = [
@@ -15,10 +15,23 @@ const terminalMarkers: Marker[] = [
   { id: "manifest", x: 8.25, z: 2.25, title: "East Terminal Manifest" },
 ];
 
+export const ARCHIVE_CHANNEL_TICKS = 3.5 * TICK_RATE;
+export const ARCHIVE_CHANNELS_COMPLETE = 0b11;
+const archiveMarkers: Marker[][] = [
+  [{ id: "archive-console", x: 7.2, z: 2.3, title: "Archive Console" }],
+  [
+    { id: "archive-near", x: -3.4, z: -2.75, title: "Near Channel", readerBit: 0b01 },
+    { id: "archive-far", x: 3.7, z: 2.75, title: "Far Channel", readerBit: 0b10 },
+  ],
+  [],
+  [{ id: "archive-recording", x: 8.05, z: 2.35, title: "Tidegate Recording" }],
+];
+
 export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "night") return [{ id: "register", x: 8.25, z: 2.25, title: "Return Register" }];
   if (mission === "return") return [{ id: "signal", x: 8.25, z: 1.25, title: "Return Signal" }];
   if (mission === "terminal") return terminalMarkers;
+  if (mission === "archive") return archiveMarkers[stage] ?? [];
   if (mission !== "chapter") return [];
   return stage === 0
     ? [

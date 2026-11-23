@@ -8,6 +8,7 @@ import { TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.t
 import { MothAnimation } from "./moth-animation.ts";
 import { instantiateActorModel, loadModelAsset, type ActorModel, type ModelAsset } from "./model-assets.ts";
 import { MODEL_SLOTS, type ModelSlot } from "./model-replacements.ts";
+import { ArchiveScenery } from "./archive-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -54,6 +55,7 @@ export class GameView {
   private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
+  private archive?: ArchiveScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -260,9 +262,20 @@ export class GameView {
     if (this.place === id) return;
     this.place = id;
     this.scenery?.dispose();
+    this.archive?.dispose();
+    this.archive = undefined;
     for (const label of this.labels.values()) label.remove();
     this.labels.clear();
+    for (const marker of markers) {
+      const label = makeLabel(this.layer, "point");
+      label.textContent = marker.title;
+      this.labels.set(marker.id, label);
+    }
     const root = this.scenery = new TransformNode("District architecture", this.scene);
+    if (world.mission === "archive") {
+      this.archive = new ArchiveScenery(this.scene, root, world.stage, markers);
+      return;
+    }
     const plaza = world.kind === "plaza";
     const night = world.mission === "night";
     const junction = world.mission === "return";
@@ -343,9 +356,6 @@ export class GameView {
       this.mesh("Sparse readout", [.32, .025, .082], [x - .12, .97, 4.61], tube, root);
     }
     for (const marker of markers) {
-      const label = makeLabel(this.layer, "point");
-      label.textContent = marker.title;
-      this.labels.set(marker.id, label);
       const terminalStatus = terminal ? this.material(marker.id + " station status", "#b67e4a") : undefined;
       const gate = marker.id === "advance" || marker.id === "signal";
       const base = gate ? [1.18, 2.17, .30] as const : marker.id === "plaque" ? [.53, .9, .42] as const
@@ -626,6 +636,7 @@ export class GameView {
       this.camera.position.x += (focus + .4 - this.camera.position.x) * (1 - Math.exp(-dt * 4));
       this.camera.setTarget(new Vector3(this.camera.position.x - .4, .7, -.29));
       this.setPlace(world, markers);
+      this.archive?.update(world, this.clock);
       const junctionLamp = world.mission === "return" ? this.palette.get("Turnout lamp") : undefined;
       if (junctionLamp) {
         const routeClear = world.wave === 1 && (world.status === "signal" || world.status === "complete");

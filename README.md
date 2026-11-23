@@ -1,6 +1,6 @@
 # Relay District
 
-Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore four story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
+Relay District is a browser-based co-op action RPG about one living biotech companion, a sealed transit line, and the city that tried to forget it. Explore five story chapters solo or with up to four people on a local network. The repair plaza is shared by up to sixteen local players.
 
 ## Run the game
 
@@ -32,6 +32,8 @@ After The Last Crossing, Dispatch opens **The Night Platform**, the next story m
 Clear The Night Platform to enter **Return Junction**. Use the return signal with your companion recalled to set the turnout, then defend it. Read the signal again to record the turnout log in each player's journal.
 
 After Return Junction, take **East Terminal** from Dispatch. Recall your companion to match the outbound and return fare readers, defend the terminal, then read the manifest to learn where the return line leads.
+
+After East Terminal, take **Tidegate Signal Archive** from Dispatch. Clear the entrance and use the console with your companion recalled. The near and far channels alternate. Scan each bank while its signal is live, then defend the archive and recover the recording for the party journal.
 
 Clear East Terminal to unlock **Terminal Watch** in Dispatch. This repeatable contract has two patrols and awards 28 battle XP per clear. Keep the whole party on its feet through both patrols to unlock the **Signal Tag**, which you can equip in the companion room. A rescue can save the run after a knockdown.
 

@@ -303,12 +303,43 @@ function options(values: string[], selected: string) {
 function signalObjective(world: WorldView) {
   if (world.mission === "night") return "Bring your recalled companion to the return register.";
   if (world.mission === "return") return "Bring your recalled companion to the return signal.";
+  if (world.mission === "archive") return world.stage === 0
+    ? "Recall your companion and use the archive console."
+    : "Recall your companion and recover the recording at the playback deck.";
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
   if (!world.readerMask) return "Bring your recalled companion to both fare readers.";
   const missing = routeMarkers("terminal", world.stage)
     .find(({ readerBit }) => readerBit && !(world.readerMask & readerBit));
   return missing ? "Bring a recalled companion to the " + missing.title + "." : "Check both fare readers.";
+}
+
+function archiveRouteObjective(world: WorldView) {
+  const activeBit = 1 << world.wave;
+  const live = routeMarkers("archive", world.stage).find((point) => point.readerBit === activeBit);
+  if (!live) return "Match both relay banks with your companion recalled.";
+  return world.readerMask & activeBit
+    ? live.title + " logged. Wait for the other bank."
+    : live.title + " live. Scan it with your companion recalled.";
+}
+
+function stationPrompt(world: WorldView, actor: ViewActor) {
+  const point = nearestMarker(markers(), actor.x, actor.z);
+  if (!point || !actor.hp) return "";
+  if (world.mission === "terminal") {
+    const ready = point.readerBit ? !(world.readerMask & point.readerBit) : world.readerMask === TERMINAL_READERS_COMPLETE;
+    if (world.status !== "signal" || !ready) return "";
+  }
+  if (world.mission === "archive") {
+    if (world.status !== "signal" && world.status !== "route") return "";
+    if (point.readerBit) {
+      if (world.readerMask & point.readerBit) return point.title + " • Logged";
+      if (point.readerBit !== (1 << world.wave)) return point.title + " • Waiting for signal";
+    }
+  }
+  const recall = world.mission === "archive" || world.status === "signal" && (world.mission === "terminal"
+    || point.id === "register" || point.id === "signal" && world.mission === "return");
+  return recall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title;
 }
 
 function updateHUD(actor?: ViewActor) {
@@ -339,25 +370,16 @@ function updateHUD(actor?: ViewActor) {
       lobby: "Share room code " + world.code + ", then start the job.",
       approach: world.mission === "night" ? "Follow the train along Platform 07." : "Read the maintenance log or head down the service lane.",
       combat: world.mission === "watch" ? `Patrol ${world.wave + 1} of 2. Clear the lane.`
+        : world.mission === "archive" ? world.stage === 0 ? "Clear the archive entrance." : "Defend the archive while the playback deck spins up."
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",
-      route: "Use the blue door marker to enter the relay room.",
+      route: world.mission === "archive" ? archiveRouteObjective(world) : "Use the blue door marker to enter the relay room.",
       signal: signalObjective(world),
       complete: "Job complete. Use Mission to return to the plaza.",
       failed: "Party down. Retry from the Mission panel.",
     })[world.status] ?? "";
   text("objective-line", target);
-  const nearby = nearestMarker(markers(), actor.x, actor.z);
-  const terminalReady = world.status === "signal" && (nearby?.readerBit
-    ? !(world.readerMask & nearby.readerBit) : world.readerMask === TERMINAL_READERS_COMPLETE);
-  const point = world.mission !== "terminal" || terminalReady ? nearby : undefined;
-  const needsRecall = world.status === "signal" && (point?.id === "register" || point?.id === "signal" && world.mission === "return"
-    || point?.id === "manifest" && world.readerMask === TERMINAL_READERS_COMPLETE
-    || point?.readerBit && !(world.readerMask & point.readerBit));
-  const stationPrompt = point && actor.hp
-    ? needsRecall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title
-    : "";
-  const prompt = rescuePrompt(actor) || stationPrompt;
+  const prompt = rescuePrompt(actor) || stationPrompt(world, actor);
   text("prompt", prompt);
   show("prompt", !!prompt);
   text("combo", actor.combo + " HIT");

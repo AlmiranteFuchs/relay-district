@@ -6,7 +6,8 @@ import {
 } from "../../shared/src/content.ts";
 import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
-import { nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
+import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, nearestMarker, PLAZA, routeMarkers,
+  TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
 
@@ -243,6 +244,10 @@ const returnWaves = [
   wave(["keeper", 0.2, -1.45], ["skitter", 4.9, 3.35]),
 ];
 const terminalPatrol = wave(["skitter", -2.8, -1.1], ["guard", 4.4, 0.1], ["skitter", 7.1, 2.7]);
+const archiveWaves = [
+  wave(["skitter", -1.85, -2.3], ["guard", 4.2, 2.1]),
+  wave(["keeper", 8, -1.6], ["skitter", -6.3, 2.7]),
+];
 const watchWaves = [
   wave(["skitter", -2.5, 2.1], ["guard", 3.8, -1.7]),
   wave(["keeper", 4.5, -.9], ["skitter", -5.8, 2.9]),
@@ -334,6 +339,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "terminal") {
       this.state.status = "signal";
       this.story(JOBS.terminal.title, "The terminal split each fare between two readers. Bring your partner to both with its weapon recalled. A party can split up and use one reader each.");
+    } else if (this.mission === "archive") {
+      this.spawn(archiveWaves[0]);
+      this.story(JOBS.archive.title, "The manifest leads to a console sealed under the river wall. Its reader is still warm. Clear the entrance patrol and bring your recalled partner to the console.");
     } else if (this.mission === "watch") {
       this.spawn(watchWaves[0]);
       this.story(JOBS.watch.title, "Dispatch needs the night crew to keep this platform open. Clear both patrols. If everyone stays on their feet, take a Signal Tag home for your partner.");
@@ -374,6 +382,10 @@ export class MissionRoom extends GameRoom {
       this.broadcast("notice", "A courier went down. The patrol contract can still be cleared.");
     }
     this.stepRescues();
+    if (this.mission === "archive" && this.state.status === "route" && this.state.frame >= this.waveReady) {
+      this.state.wave = this.state.wave === 0 ? 1 : 0;
+      this.waveReady += ARCHIVE_CHANNEL_TICKS;
+    }
     if (this.state.status === "approach" && this.actors().some((player) => player.x > -2.35)) {
       this.spawn(this.mission === "night" ? nightWave : chapterWaves[0]);
       return;
@@ -407,6 +419,16 @@ export class MissionRoom extends GameRoom {
     if (this.mission === "terminal") {
       this.state.status = "signal";
       this.story("Terminal clear", "The manifest drawer is open. Take your recalled partner to the east end and read the manifest together.");
+      return;
+    }
+    if (this.mission === "archive") {
+      if (this.state.stage === 2) this.state.stage = 3;
+      this.state.status = "signal";
+      if (this.state.stage === 0) {
+        this.story("Archive entrance clear", "The old console is answering the fare token. Recall your partner before you touch it.");
+      } else {
+        this.story("Playback available", "The archive has kept one voice message. Bring your recalled partner to the recorder at the east end.");
+      }
       return;
     }
     if (this.mission === "watch" && this.state.wave === 0) {
@@ -488,6 +510,8 @@ export class MissionRoom extends GameRoom {
       this.story("The Switchkeeper", "Its hands still close around the route controls. Step out of its wind-up, then answer during recovery.");
     } else if (this.mission === "terminal" && this.state.status === "signal") {
       this.interactTerminal(entry, point);
+    } else if (this.mission === "archive") {
+      this.interactArchive(entry, point);
     } else if ((point.id === "signal" || point.id === "register") && this.state.status === "signal") {
       this.interactSignal(entry, point);
     } else client.send("notice", "The passage opens when the lane is safe.");
@@ -532,6 +556,47 @@ export class MissionRoom extends GameRoom {
       this.spawn(returnWaves[1]);
       this.story("Return track open", "The turnout throws. Your partner tastes a charge on the rail as a Switchkeeper comes up the open track. Arm again and keep the line clear.");
     } else this.finish();
+  }
+
+  private interactArchive(entry: Entry, point: Marker) {
+    if (this.state.status === "signal") {
+      if (!this.hearSignal(entry, point)) return;
+      if (this.state.stage === 3) {
+        this.finish();
+        return;
+      }
+      this.clearEnemies();
+      this.state.stage = 1;
+      this.state.wave = 0;
+      this.state.status = "route";
+      this.waveReady = this.state.frame + ARCHIVE_CHANNEL_TICKS;
+      this.story("Tidegate dispatch capsule", "Fare confirmed. The override is split between two channels. Use each reader while its lamp is lit, with your partner recalled. Each reading stays recorded when the lamps switch.");
+      return;
+    }
+    const { readerBit } = point;
+    if (this.state.status !== "route" || !readerBit) {
+      entry.client.send("notice", "The archive opens when the lane is safe.");
+      return;
+    }
+    if (this.state.readerMask & readerBit) {
+      entry.client.send("notice", "This channel is already recorded. Use the other channel.");
+      return;
+    }
+    if (readerBit !== (1 << this.state.wave)) {
+      const live = this.state.wave === 0 ? "near" : "far";
+      entry.client.send("notice", "This channel is quiet. The " + live + " channel is live. Wait for this lamp to light.");
+      return;
+    }
+    if (!this.hearSignal(entry, point)) return;
+    this.state.readerMask |= readerBit;
+    if (this.state.readerMask === ARCHIVE_CHANNELS_COMPLETE) {
+      this.state.stage = 2;
+      this.waveReady = 0;
+      this.spawn(archiveWaves[1]);
+      this.story("Override accepted", "The recorder unlocks. A Switchkeeper is coming from the east while a crawler cuts in behind you. Arm your partner and defend the archive.");
+    } else {
+      this.broadcast("notice", point.title + " recorded.");
+    }
   }
 
   private finish() {
