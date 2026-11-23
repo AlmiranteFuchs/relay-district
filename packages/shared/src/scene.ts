@@ -75,6 +75,19 @@ export const BELLHOUSE_CALLS_COMPLETE = 0b111;
 const bellhouseMarkers: Marker[][] = [
   [], BELLHOUSE_CALLS, BELLHOUSE_CALLS, [{ id: "bell-roster", x: 8.45, z: .25, title: "Roster Desk" }],
 ];
+export interface RosterCase { x: number; z: number; carrier: string; filed: boolean }
+export const ANNEX_CASE_HOME = { x: -6.55, z: 2.7 };
+export const ANNEX_FILING_DESK: Marker = { id: "annex-desk", title: "Records Desk", x: 7.6, z: 2.45 };
+const annexMarkers = [ANNEX_FILING_DESK];
+const CASE_PICKUP_REACH = 1.65;
+
+export function annexCaseAction(rosterCase: RosterCase, actorId: string, x: number, z: number) {
+  if (rosterCase.filed) return;
+  const atDesk = nearestMarker(annexMarkers, x, z);
+  if (rosterCase.carrier && rosterCase.carrier === actorId) return atDesk ? "file" : "set-down";
+  if (!rosterCase.carrier && Math.hypot(x - rosterCase.x, z - rosterCase.z) <= CASE_PICKUP_REACH) return "pick-up";
+  if (atDesk) return "needs-case";
+}
 export const BAY_RELAY_CALLS_COMPLETE = 0b11;
 export const BAY_RELAY_STAGGER_TICKS = 40;
 const bayRelayMarkers: Marker[] = [
@@ -93,6 +106,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "lift") return liftMarkers[stage] ?? [];
   if (mission === "pump") return pumpMarkers[stage] ?? [];
   if (mission === "bellhouse") return bellhouseMarkers[stage] ?? [];
+  if (mission === "annex") return annexMarkers;
   if (mission === "bayrelay") return bayRelayMarkers;
   if (mission !== "chapter") return [];
   return stage === 0

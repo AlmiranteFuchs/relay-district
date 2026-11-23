@@ -16,7 +16,7 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
   type CompanionPlayMessage, type CompanionPlayRequest, type Signal } from "../packages/shared/src/companion-play.ts";
 import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
-import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, BELLHOUSE_CALLS,
+import { ANNEX_CASE_HOME, ANNEX_FILING_DESK, ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, BELLHOUSE_CALLS,
   BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS,
   LIFT_LEG_TICKS, LIFT_PHASE, PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE,
   type BellhouseCue, VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
@@ -1667,6 +1667,157 @@ test("Bellhouse shares distinct name calls in either order with combat and unloc
     for (const enemy of guards) Object.assign(enemy, { phase: "idle", ticks: 0 });
     await fight([a, b], "signal", 30000);
     await until("defeating the guards last opens the same desk", () => phase(3, "signal", BELLHOUSE_CALLS_COMPLETE));
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("Registry Annex shares a recoverable case and requires both the patrol and filing to clear", { timeout: 85000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    const party = [alpha, beta];
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      server.store.reward([id], "pump-unlock", "pump");
+      if (account !== guest) server.store.reward([id], "bellhouse-unlock", "bellhouse");
+    }
+    const initial = await Promise.all(party.map((account) => account.profile()));
+    await assert.rejects(guest.sdk.create("mission", { mission: "annex" }), /Clear Bellhouse/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "annex" }) as Socket);
+    rooms.push(first);
+    await local(first);
+    const { id } = await (await beta.request("rooms/" + first.state.code)).json() as { id: string };
+    await assert.rejects(guest.sdk.joinById(id), /Clear Bellhouse/);
+    const other = connectHandlers(await beta.sdk.joinById(id) as Socket);
+    rooms.push(other);
+    await local(other);
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const phase = (stage: number, status: string) => rooms.every((room) => room.state.stage === stage && room.state.status === status);
+    const caseState = (carrier: string, filed = false) => rooms.every((room) =>
+      room.state.rosterCase?.carrier === carrier && room.state.rosterCase?.filed === filed);
+    const caseIn = (room: Socket) => {
+      const snapshot = room.state.rosterCase;
+      assert.ok(snapshot, "the room has a case snapshot");
+      return snapshot;
+    };
+    const near = (one: { x: number; z: number }, two: { x: number; z: number }, tolerance = .001) =>
+      Math.hypot(one.x - two.x, one.z - two.z) < tolerance;
+    const held = (courier: TestCourier) => caseState(courier.room.sessionId);
+    const foes = (room: Socket) => [...room.state.actors.values()].filter((actor) => actor.kind !== "player" && actor.hp > 0);
+    const hitFeeds = rooms.map((room) => {
+      const hits: CombatEvent[] = [];
+      room.onMessage("combat", (event: CombatEvent) => { if (event.type === "hit") hits.push(event); });
+      return hits;
+    });
+    const notices = rooms.map((room) => {
+      const messages: string[] = [];
+      room.onMessage("notice", (notice: string) => { messages.push(notice); });
+      return messages;
+    });
+    const keepArmed = async (courier: TestCourier) => {
+      await until("case operator stands idle", () => courier.me.phase === "idle");
+      if (!courier.me.armed) courier.send(0, 0, "morph");
+      await until("case operator holds a weapon", () => courier.me.armed && courier.me.phase === "idle");
+    };
+    const approachCase = async (courier: TestCourier) => {
+      const floorCase = caseIn(courier.room);
+      await courier.go(floorCase.x, floorCase.z);
+      await until("the case pickup position is confirmed", () => courier.me.ack === courier.seq
+        && !courier.me.moving && near(courier.me, floorCase, .85));
+    };
+
+    first.send("begin");
+    await until("both players enter the Registry Annex", () => phase(0, "combat"));
+    for (const room of rooms) assert.deepEqual(foes(room).map((foe) => foe.kind).sort(), ["runner", "skitter"]);
+    await fight([a, b], "signal", 23000);
+    await until("the roster case appears at its pickup site", () => phase(1, "signal") && caseState("")
+      && rooms.every((room) => near(caseIn(room), ANNEX_CASE_HOME)));
+    assert.ok(a.me.hp > 21 && b.me.hp > 0);
+    await b.go(ANNEX_CASE_HOME.x - .5, ANNEX_CASE_HOME.z + 1.4);
+    await keepArmed(a);
+    await approachCase(a);
+    first.send("interact");
+    await until("the armed pickup starts the guard patrol", () => phase(2, "combat") && held(a));
+    for (const room of rooms) assert.deepEqual(foes(room).map((foe) => foe.kind).sort(), ["guard", "runner"]);
+
+    const mission = matchMaker.getLocalRoomById(first.roomId) as MissionRoom;
+    const patrol = [...mission["enemies"].values()];
+    const spawns = patrol.map(({ x, z, facing }) => ({ x, z, facing }));
+    const guard = patrol.find((enemy) => enemy.kind === "guard")!;
+    // Park the patrol while making the hit and connection changes deterministic. Its actual fight follows below.
+    for (const enemy of patrol) Object.assign(enemy, { phase: "recover", ticks: 1800, target: "" });
+    await a.go(ANNEX_CASE_HOME.x + 1.5, ANNEX_CASE_HOME.z);
+    await until("the courier moves with the case", () => a.me.ack === a.seq && !a.me.moving && held(a));
+    assert.ok(Math.abs(a.me.x - ANNEX_CASE_HOME.x) > .95);
+    assert.ok(rooms.every((room) => near(caseIn(room), ANNEX_CASE_HOME)), "the held case retains its last floor position");
+    const carrier = mission["players"].get(first.sessionId)!.player;
+    Object.assign(guard, { x: carrier.x + 1.05, z: carrier.z, facing: -1, phase: "windup", ticks: 10, target: first.sessionId });
+    await until("both clients see the Gateback hit and dropped case", () => caseState("") && hitFeeds.every((hits) =>
+      hits.some((event) => event.source === guard.id && event.target === first.sessionId && event.damage === 21)));
+    assert.ok(a.me.hp > 0);
+    assert.ok(rooms.every((room) => near(caseIn(room), room.state.actors.get(first.sessionId)!, .35)));
+    Object.assign(guard, { phase: "recover", ticks: 1800, target: "" });
+    await approachCase(b);
+    other.send("interact");
+    await until("Ivo can pick up the dropped case", () => held(b));
+
+    await a.go(b.me.x + .7, b.me.z);
+    const partnerSession = other.sessionId;
+    let reconnected = false;
+    other.reconnection.minDelay = 1200;
+    other.onReconnect.once(() => { reconnected = true; });
+    other.connection.close(4010, "test drop while carrying the case");
+    await until("the disconnected carrier leaves the case on the floor", () => caseIn(first).carrier === ""
+      && first.state.actors.get(partnerSession)?.connected === false);
+    first.send("interact");
+    await until("Aster reclaims the case while Ivo is offline", () => caseIn(first).carrier === first.sessionId
+      && first.state.actors.get(partnerSession)?.connected === false);
+    await until("Ivo reconnects and sees Aster holding the same case", () => reconnected && other.sessionId === partnerSession
+      && first.state.actors.get(partnerSession)?.connected && held(a));
+
+    await recallForReader(a);
+    const casualty = mission["players"].get(partnerSession)!.player;
+    Object.assign(casualty, { hp: 0, x: carrier.x + .7, z: carrier.z });
+    await until("the downed courier reaches both clients", () => rooms.every((room) => room.state.actors.get(partnerSession)?.hp === 0));
+    first.send("interact");
+    await until("rescue takes priority over setting the held case down", () => a.me.rescueTarget === partnerSession && held(a));
+    await until("the rescue completes without dropping the case", () => b.me.hp === RESCUE_HEALTH && held(a));
+    first.send("interact");
+    await until("a separate use away from the desk sets the case down", () => caseState("") && phase(2, "combat"));
+    for (const [index, enemy] of patrol.entries()) Object.assign(enemy, { ...spawns[index], phase: "idle", ticks: 0 });
+    await fight([a, b], "signal", 28000);
+    await until("the defeated patrol still leaves the roster case to file", () => phase(2, "signal") && caseState(""));
+    assert.deepEqual(await Promise.all(party.map((account) => account.profile())), initial);
+
+    const filer = a.me.hp > 0 ? a : b;
+    await keepArmed(filer);
+    await approachCase(filer);
+    filer.room.send("interact");
+    await until("the final courier takes the case to file", () => held(filer));
+    await filer.go(ANNEX_FILING_DESK.x, ANNEX_FILING_DESK.z);
+    await until("the carrier stops at the Records Desk", () => filer.me.ack === filer.seq && !filer.me.moving && held(filer));
+    const messages = notices[rooms.indexOf(filer.room)];
+    const beforeArmedAttempt = messages.length;
+    filer.room.send("interact");
+    await until("the Records Desk asks for recall", () => messages.slice(beforeArmedAttempt).some((message) => message.includes("Recall your partner")));
+    assert.ok(phase(2, "signal") && held(filer));
+    await recallForReader(filer);
+    filer.room.send("interact");
+    filer.room.send("interact");
+    await until("filing clears the Registry Annex once for the party", () => phase(3, "complete") && caseState("", true));
+    for (const [index, account] of party.entries()) {
+      const profile = await account.profile();
+      assert.equal(profile.companion, initial[index].companion);
+      assert.equal(profile.battleXp, initial[index].battleXp + 48);
+      assert.equal(profile.bond, initial[index].bond + 6);
+      assert.deepEqual(profile.lore, [...initial[index].lore, "annex"]);
+      assert.deepEqual(profile.clears, [...initial[index].clears, "annex"]);
+    }
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

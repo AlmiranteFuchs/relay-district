@@ -10,11 +10,11 @@ import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
   type CompanionPlayMessage, type Signal } from "../../shared/src/companion-play.ts";
 import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
-import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
+import { ANNEX_CASE_HOME, ANNEX_FILING_DESK, annexCaseAction, ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
   BELLHOUSE_CALLS, BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA,
   PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE, type BellhouseCue, type BellhouseNote,
   VIADUCT_RELAY_TICKS, type Marker } from "../../shared/src/scene.ts";
-import { ActorState, CrewAssistState, GameState } from "./wire.ts";
+import { ActorState, CrewAssistState, GameState, RosterCaseState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
 
 let store: Store;
@@ -411,6 +411,10 @@ const bellhouseWaves = [
   wave(["skitter", -2.7, -1.8], ["skitter", 3.1, 2.6]),
   wave(["guard", 6.8, -.85], ["runner", 1.85, 1]),
 ];
+const annexWaves = [
+  wave(["runner", 1.3, -2.65], ["skitter", 4.7, 2.5]),
+  wave(["runner", -.2, -2.9], ["guard", 6.75, .3]),
+];
 const nextPressureLane = [2, 0, 1];
 const bayRelayPatrol = wave(["runner", -2.85, -1.3], ["guard", 4.75, .9], ["runner", 7.25, -2.35]);
 const watchWaves = [
@@ -509,7 +513,13 @@ export class MissionRoom extends GameRoom {
     leader.client.send("notice", [result, ...skipped].join(" "));
   }
 
+  override async onDrop(client: Client) {
+    this.dropRosterCase(client.sessionId);
+    await super.onDrop(client);
+  }
+
   override onLeave(client: Client) {
+    this.dropRosterCase(client.sessionId);
     super.onLeave(client);
     if (this.state.leader === client.sessionId) this.state.leader = this.players.keys().next().value ?? "";
   }
@@ -535,6 +545,7 @@ export class MissionRoom extends GameRoom {
     this.state.wave = 0;
     this.state.readerMask = 0;
     this.state.readerUntil = 0;
+    this.state.rosterCase = undefined;
     this.state.crewAssists.clear();
     this.state.status = "approach";
     this.waveReady = 0;
@@ -580,6 +591,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "bellhouse") {
       this.spawn(bellhouseWaves[0]);
       this.story(JOBS.bellhouse.title, "The original pump roster is at the east desk. Ina is waiting for the old roll call before she and the other couriers add their signatures. Clear the hall so your partner can answer.");
+    } else if (this.mission === "annex") {
+      this.spawn(annexWaves[0]);
+      this.story(JOBS.annex.title, "Ina left the signed roster in its red case at the west intake. Clerk Vale is waiting at the east desk. Clear the intake and bring the case across.");
     } else if (this.mission === "bayrelay") {
       this.spawn(bayRelayPatrol);
       this.story(JOBS.bayrelay.title, "Dispatch needs both call boxes checked. Use each box with a recalled partner. During combat, each call interrupts the patrol once. Clear the platform to sign off.");
@@ -623,6 +637,10 @@ export class MissionRoom extends GameRoom {
   protected override afterStep() {
     this.creditRelayOpening();
     if (this.mission === "viaduct") this.expireViaductRelay();
+    const carrier = this.state.rosterCase?.carrier;
+    if (carrier && (!this.players.get(carrier)?.player.hp || this.events.some((event) => event.type === "hit" && event.target === carrier))) {
+      this.dropRosterCase(carrier);
+    }
     if (this.mission === "watch" && this.watchCommended && this.state.status === "combat"
       && this.actors().some((player) => player.hp === 0)) {
       this.watchCommended = false;
@@ -767,6 +785,21 @@ export class MissionRoom extends GameRoom {
       }
       return;
     }
+    if (this.mission === "annex") {
+      if (this.state.stage === 0) {
+        this.state.stage = 1;
+        this.state.status = "signal";
+        this.state.rosterCase = new RosterCaseState().assign(ANNEX_CASE_HOME);
+        this.story("Intake clear", "Pick up the red Roster Case. If the guard lands a hit, the case drops. Any courier can pick it up.");
+      } else if (this.state.rosterCase?.filed) {
+        this.state.stage = 3;
+        this.finish();
+      } else {
+        this.state.status = "signal";
+        this.story("Records Desk clear", "Carry the roster to the Records Desk and recall your partner to help Vale match the names.");
+      }
+      return;
+    }
     if (this.mission === "bayrelay") {
       if (this.state.readerMask === BAY_RELAY_CALLS_COMPLETE) {
         this.finish();
@@ -845,6 +878,10 @@ export class MissionRoom extends GameRoom {
         entry.rescue = { target: closest, start: this.state.frame };
         return;
       }
+    }
+    if (this.mission === "annex") {
+      this.interactAnnex(entry);
+      return;
     }
     const point = nearestMarker(routeMarkers(this.mission, this.state.stage), entry.player.x, entry.player.z);
     if (!point) return;
@@ -1166,6 +1203,53 @@ export class MissionRoom extends GameRoom {
     this.state.stage = 3;
     this.state.status = "signal";
     this.story("The signed roster", "The hall is clear and all three bells have answered. Ina and the other couriers have signed at the east desk. Bring your recalled partner to read the names and take a seal home.");
+  }
+
+  private interactAnnex(entry: Entry) {
+    const { rosterCase, status, stage } = this.state;
+    if (!rosterCase || (status !== "combat" && status !== "signal")) return;
+    const player = entry.player;
+    switch (annexCaseAction(rosterCase, player.id, player.x, player.z)) {
+      case "pick-up":
+        rosterCase.carrier = player.id;
+        if (stage === 1) {
+          this.state.stage = 2;
+          this.spawn(annexWaves[1]);
+          this.story("Guard approaching", "A Cable Runner and a Gateback are crossing the hall. Protect the courier with the case, or clear the guard before you deliver it.");
+        } else {
+          this.broadcast("notice", player.name + " picked up the Roster Case.");
+        }
+        break;
+      case "set-down":
+        this.dropRosterCase(player.id, "Roster Case set down.");
+        break;
+      case "file":
+        if (!this.hearSignal(entry, ANNEX_FILING_DESK, "Recall your partner with Q first.")) break;
+        rosterCase.carrier = "";
+        rosterCase.filed = true;
+        rosterCase.x = ANNEX_FILING_DESK.x;
+        rosterCase.z = ANNEX_FILING_DESK.z;
+        if (status === "signal") {
+          this.state.stage = 3;
+          this.finish();
+        } else this.broadcast("notice", "Roster filed. Clear the remaining guard.");
+        break;
+      case "needs-case":
+        entry.client.send("notice", "Bring the Roster Case to this desk.");
+        break;
+    }
+  }
+
+  private dropRosterCase(carrier: string, notice = "Roster Case dropped.") {
+    const rosterCase = this.state.rosterCase;
+    if (rosterCase?.carrier !== carrier) return;
+    const player = this.players.get(carrier)?.player;
+    if (player) {
+      rosterCase.x = player.x;
+      rosterCase.z = player.z;
+    }
+    rosterCase.carrier = "";
+    this.broadcast("notice", notice);
   }
 
   private finish() {

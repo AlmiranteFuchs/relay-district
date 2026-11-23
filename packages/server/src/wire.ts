@@ -1,5 +1,6 @@
 import { ArraySchema, defineTypes, MapSchema, Schema } from "@colyseus/schema";
 import type { CrewAssist } from "../../shared/src/crew-assists.ts";
+import type { RosterCase } from "../../shared/src/scene.ts";
 
 export class ActorState extends Schema {
   declare x: number;
@@ -61,6 +62,19 @@ export class CrewAssistState extends Schema implements CrewAssist {
 }
 defineTypes(CrewAssistState, { kind: "string", source: "string", target: "string", station: "string" });
 
+export class RosterCaseState extends Schema implements RosterCase {
+  declare x: number;
+  declare z: number;
+  declare carrier: string;
+  declare filed: boolean;
+
+  constructor() {
+    super();
+    Object.assign(this, { x: 0, z: 0, carrier: "", filed: false });
+  }
+}
+defineTypes(RosterCaseState, { x: "float32", z: "float32", carrier: "string", filed: "boolean" });
+
 export class GameState extends Schema {
   declare kind: string;
   declare mission: string;
@@ -75,6 +89,7 @@ export class GameState extends Schema {
   declare practice: boolean;
   declare actors: MapSchema<ActorState>;
   declare crewAssists: ArraySchema<CrewAssistState>;
+  declare rosterCase?: RosterCaseState;
   constructor() {
     super();
     Object.assign(this, { kind: "plaza", mission: "", status: "plaza", code: "", leader: "",
@@ -86,4 +101,5 @@ defineTypes(GameState, {
   kind: "string", mission: "string", status: "string", code: "string", leader: "string",
   stage: "uint8", wave: "uint8", readerMask: "uint8", readerUntil: "uint32", frame: "uint32", practice: "boolean", actors: { map: ActorState },
   crewAssists: { array: CrewAssistState },
+  rosterCase: RosterCaseState,
 });

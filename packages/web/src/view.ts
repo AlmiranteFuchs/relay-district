@@ -4,7 +4,7 @@ import {
 } from "@babylonjs/core";
 import { FORMS, TICK_RATE, type Family } from "../../shared/src/content.ts";
 import { ENEMY_WINDUP_TICKS, RUNNER_HIT_RADIUS, RUNNER_LUNGE_TICKS, type CombatEvent } from "../../shared/src/combat.ts";
-import { TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
+import { TERMINAL_READERS_COMPLETE, type Marker, type RosterCase } from "../../shared/src/scene.ts";
 import { MothAnimation } from "./moth-animation.ts";
 import { instantiateActorModel, loadModelAsset, type ActorModel, type ModelAsset } from "./model-assets.ts";
 import { MODEL_SLOTS, type ModelSlot } from "./model-replacements.ts";
@@ -15,6 +15,7 @@ import { ViaductScenery } from "./viaduct-view.ts";
 import { LiftScenery } from "./lift-view.ts";
 import { PumpScenery } from "./pump-view.ts";
 import { BellhouseScenery } from "./bellhouse-view.ts";
+import { AnnexScenery } from "./annex-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -25,6 +26,7 @@ export interface ViewActor {
 export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
   frame: number; practice: boolean; readerMask: number; readerUntil: number; actors: Map<string, ViewActor>;
+  rosterCase?: RosterCase;
 }
 
 interface Visual {
@@ -67,7 +69,7 @@ export class GameView {
   private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
-  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery | PumpScenery | BellhouseScenery;
+  private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery | PumpScenery | BellhouseScenery | AnnexScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -273,8 +275,9 @@ export class GameView {
     const id = world.kind + world.mission + world.stage + (world.status === "lobby" ? "lobby" : "");
     if (this.place === id) return;
     this.place = id;
-    const keepBellhouse = world.mission === "bellhouse" && this.missionScenery instanceof BellhouseScenery;
-    if (!keepBellhouse) {
+    const keepScenery = world.mission === "bellhouse" && this.missionScenery instanceof BellhouseScenery
+      || world.mission === "annex" && this.missionScenery instanceof AnnexScenery;
+    if (!keepScenery) {
       this.scenery?.dispose();
       this.missionScenery?.dispose();
       this.missionScenery = undefined;
@@ -286,8 +289,12 @@ export class GameView {
       label.textContent = marker.title;
       this.labels.set(marker.id, label);
     }
-    if (keepBellhouse) return;
+    if (keepScenery) return;
     const root = this.scenery = new TransformNode("District architecture", this.scene);
+    if (world.mission === "annex") {
+      this.missionScenery = new AnnexScenery(this.scene, root);
+      return;
+    }
     if (world.mission === "bellhouse") {
       this.missionScenery = new BellhouseScenery(this.scene, root);
       return;
@@ -839,7 +846,7 @@ export class GameView {
       this.camera.position.x += (focus + .4 - this.camera.position.x) * (1 - Math.exp(-dt * 4));
       this.camera.setTarget(new Vector3(this.camera.position.x - .4, .7, -.29));
       this.setPlace(world, markers);
-      this.missionScenery?.update(world, this.clock);
+      if (!(this.missionScenery instanceof AnnexScenery)) this.missionScenery?.update(world, this.clock);
       const junctionLamp = world.mission === "return" ? this.palette.get("Turnout lamp") : undefined;
       if (junctionLamp) {
         const routeClear = world.wave === 1 && (world.status === "signal" || world.status === "complete");
@@ -911,6 +918,10 @@ export class GameView {
           const labelHeight = downed ? .88 : actor.kind === "player" || actor.kind === "keeper" ? 2.06 : actor.kind === "runner" ? 1.79 : 1.34;
           this.project(visual.label, new Vector3(visual.at.x, visual.at.y + labelHeight, visual.at.z));
         }
+      }
+      if (this.missionScenery instanceof AnnexScenery) {
+        const carrier = world.rosterCase?.carrier;
+        this.missionScenery.update(world, carrier ? this.visuals.get(carrier)?.at : undefined);
       }
       for (const point of markers) {
         const label = this.labels.get(point.id);

@@ -8,7 +8,7 @@ import {
   DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW,
   type DispatchInvitation, type DispatchInviteRequest, type DispatchRecentCrew,
 } from "../../shared/src/dispatch.ts";
-import { BELLHOUSE_CALLS, LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers,
+import { annexCaseAction, BELLHOUSE_CALLS, LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers,
   TERMINAL_READERS_COMPLETE, type BellhouseCue } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
@@ -136,6 +136,7 @@ function capture(state: Wire) {
   return {
     kind: state.kind, mission: state.mission, status: state.status, code: state.code, leader: state.leader,
     stage: state.stage, wave: state.wave, readerMask: state.readerMask, readerUntil: state.readerUntil,
+    rosterCase: state.rosterCase && { x: state.rosterCase.x, z: state.rosterCase.z, carrier: state.rosterCase.carrier, filed: state.rosterCase.filed },
     frame: state.frame, practice: state.practice, actors,
   };
 }
@@ -502,6 +503,7 @@ function signalObjective(world: WorldView) {
     ? "Recall your companion and read the Pump Record."
     : "Recall your companion and use the Intake Control.";
   if (world.mission === "bellhouse") return bellhouseObjective(world);
+  if (world.mission === "annex") return annexObjective(world);
   if (world.mission === "bayrelay") return bayRelayObjective(world);
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
@@ -557,9 +559,32 @@ function bellhouseObjective(world: WorldView) {
   return `Answer the bells with your companion recalled (${answered}/${BELLHOUSE_CALLS.length}).`;
 }
 
+function annexObjective(world: WorldView) {
+  const rosterCase = world.rosterCase;
+  if (!rosterCase) return "Clear the Registry Annex intake.";
+  if (rosterCase.filed) return "Roster filed. Clear the remaining guard.";
+  if (rosterCase.carrier === room?.sessionId) return "Carry the Roster Case to the Records Desk. Recall your companion to file it.";
+  if (rosterCase.carrier) return "Cover " + (world.actors.get(rosterCase.carrier)?.name ?? "the carrier") + " to the Records Desk.";
+  return world.stage === 1 ? "Pick up the red Roster Case at the west intake."
+    : "Pick up the dropped Roster Case and bring it to the Records Desk.";
+}
+
+function annexPrompt(world: WorldView, actor: ViewActor) {
+  if (!world.rosterCase || !room || (world.status !== "combat" && world.status !== "signal")) return "";
+  switch (annexCaseAction(world.rosterCase, room.sessionId, actor.x, actor.z)) {
+    case "pick-up": return "E  •  Pick up Roster Case";
+    case "set-down": return "E  •  Set down Roster Case";
+    case "file": return actor.armed ? "Q  •  Recall " + actor.companion + " to file" : "E  •  File the roster";
+    case "needs-case": return "Records Desk  •  Bring the Roster Case";
+    default: return "";
+  }
+}
+
 function stationPrompt(world: WorldView, actor: ViewActor) {
+  if (!actor.hp) return "";
+  if (world.mission === "annex") return annexPrompt(world, actor);
   const point = nearestMarker(markers(), actor.x, actor.z);
-  if (!point || !actor.hp) return "";
+  if (!point) return "";
   if ((world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct" || world.mission === "pump")
     && world.status !== "signal") return "";
   if (world.mission === "terminal") {
@@ -635,6 +660,7 @@ function updateHUD(actor?: ViewActor) {
         : world.mission === "lift" ? liftCombatObjective(world)
         : world.mission === "pump" ? pumpCombatObjective(world)
         : world.mission === "bellhouse" ? bellhouseObjective(world)
+        : world.mission === "annex" ? annexObjective(world)
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: world.mission === "departure" ? "The Switchkeeper is staggered. A Cable Runner is coming from the west."
         : world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",

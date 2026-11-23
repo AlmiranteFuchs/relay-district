@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -157,6 +157,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "Spindle, Nacre, and Pith. Three couriers have signed beside those names, including Ina, who still uses a cane from the night at the wall. The bell strokes were how the partners announced themselves for a shift. They made their own marks beside the signatures. Your partner presses its shell to the three-stamp seal and taps back. Ina has asked Dispatch to bring the roster to the Registry Annex in daylight.",
     hint: "Answer the Bellhouse calls and read the roster at the east desk",
   },
+  annex: {
+    title: "Registry Annex intake receipt",
+    text: "Clerk Vale accepted the Bellhouse roster and filed the signatures and partner marks under their own names. The stamp proves the city received it. When the old intake reader asks for an equipment code, your partner answers with its two-beat call. Vale pulls the original transfer card and points you to the Flood Index, where the working crews' records were moved during the closure.",
+    hint: "Carry the signed roster to the Records Desk and clear its guard",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -199,6 +204,10 @@ export const JOBS: Record<Mission, {
   bellhouse: {
     title: "Bellhouse", description: "Answer three names from the recovered roster and hold off the guard until the crews can sign it.",
     clearLore: "bellhouse", requiresChapter: true, prerequisite: "pump",
+  },
+  annex: {
+    title: "Registry Annex", description: "Carry the signed Bellhouse roster across the annex and file it with the Records Desk.",
+    clearLore: "annex", requiresChapter: true, prerequisite: "bellhouse",
   },
   bayrelay: {
     title: "Bay Four Relay",
