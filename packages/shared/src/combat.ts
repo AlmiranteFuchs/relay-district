@@ -19,7 +19,7 @@ export const ENEMY_WINDUP_TICKS = { skitter: 32, guard: 38, keeper: 52, runner: 
 export const RUNNER_HIT_RADIUS = .64;
 export const RUNNER_LUNGE_TICKS = 14;
 export interface CombatEvent {
-  type: "hit" | "swing" | "windup" | "arm" | "dodge" | "down" | "observe" | "revive" | "clear";
+  type: "hit" | "swing" | "windup" | "interrupt" | "arm" | "dodge" | "down" | "observe" | "revive" | "clear";
   source: string;
   target?: string;
   damage?: number;

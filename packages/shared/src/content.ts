@@ -1,5 +1,5 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
 export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure";
 export const TICK_RATE = 60;
@@ -164,6 +164,11 @@ export const JOBS: Record<Mission, {
     title: "First Departure", description: "Take both halves of the fare to Bay 4 and clear the platform for the 05:20 train.",
     clearLore: "departure", requiresChapter: true, prerequisite: "exchange",
   },
+  bayrelay: {
+    title: "Bay Four Relay",
+    description: "Repeatable contract. Clear the platform and answer both call boxes. Each call can interrupt the patrol once.",
+    prerequisite: "departure",
+  },
   watch: {
     title: "Terminal Watch",
     description: "Repeatable contract. Clear two patrols. Keep everyone on their feet to earn the Signal Tag.",
@@ -190,6 +195,7 @@ export interface Profile {
   trinket: string;
   roomTheme: string;
   watchCommendation?: true;
+  bayRelayComplete?: true;
 }
 
 export function battleRank(xp: number): number {
@@ -199,6 +205,8 @@ export function battleRank(xp: number): number {
 export const TRINKETS = ["Fare token", "Copper ribbon", "Blue bell"];
 export const SIGNAL_TAG = "Signal Tag";
 export const BAY_FOUR_TICKET = "Bay Four Ticket";
+export const RELAY_PENNANT = "Relay Pennant";
+export const BAY_RELAY_XP = 32;
 export const TERMINAL_WATCH_XP = 28;
 export const ROOM_THEMES = ["Station blue", "Amber window", "Moss glass"];
 
@@ -206,6 +214,7 @@ export function availableTrinkets(profile: Profile): string[] {
   const keepsakes = [...TRINKETS];
   if (profile.watchCommendation) keepsakes.push(SIGNAL_TAG);
   if (profile.clears.includes("departure")) keepsakes.push(BAY_FOUR_TICKET);
+  if (profile.bayRelayComplete) keepsakes.push(RELAY_PENNANT);
   return keepsakes;
 }
 

@@ -16,7 +16,7 @@ export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
   kind: string; hp: number; maxHp: number; energy: number; armed: boolean; connected: boolean;
   phase: string; age: number; duration: number; combo: number; step: number; ack: number; moving: boolean; rank: number;
-  rescued: boolean; rescueTarget: string; rescueTicks: number; signalTag: boolean; bayFourTicket: boolean;
+  rescued: boolean; rescueTarget: string; rescueTicks: number; signalTag: boolean; bayFourTicket: boolean; relayPennant: boolean;
 }
 export interface WorldView {
   kind: string; mission: string; status: string; code: string; leader: string; stage: number; wave: number;
@@ -30,6 +30,7 @@ interface Visual {
   mothAnimation?: MothAnimation;
   signalTag?: TransformNode;
   bayFourTicket?: TransformNode;
+  relayPennant?: TransformNode;
   at: Vector3;
   shadow: Mesh;
   family: Family;
@@ -39,7 +40,10 @@ interface Visual {
   labelText: Text;
   bar?: HTMLElement;
 }
-interface Effect { mesh?: Mesh; label?: HTMLDivElement; position: Vector3; time: number; lasts: number; material?: StandardMaterial; fadeAt?: number }
+interface Effect {
+  mesh?: Mesh; label?: HTMLDivElement; position: Vector3; time: number; lasts: number;
+  material?: StandardMaterial; fadeAt?: number; warningSource?: string;
+}
 
 function makeLabel(parent: HTMLElement, className = "") {
   const label = document.createElement("div");
@@ -275,8 +279,8 @@ export class GameView {
       this.labels.set(marker.id, label);
     }
     const root = this.scenery = new TransformNode("District architecture", this.scene);
-    if (world.mission === "departure") {
-      this.missionScenery = new DepartureScenery(this.scene, root, markers);
+    if (world.mission === "departure" || world.mission === "bayrelay") {
+      this.missionScenery = new DepartureScenery(this.scene, root, markers, world.mission === "bayrelay");
       return;
     }
     if (world.mission === "archive" || world.mission === "exchange") {
@@ -427,6 +431,7 @@ export class GameView {
     visual.weapon?.dispose();
     visual.signalTag = undefined;
     visual.bayFourTicket = undefined;
+    visual.relayPennant = undefined;
     if (visual.mothAnimation) {
       for (const name of ["torso", "head", "arm_near", "arm_far", "elbow_near", "elbow_far"]) {
         const joint = visual.model.parts.get(name);
@@ -499,6 +504,37 @@ export class GameView {
     return ticket;
   }
 
+  private makeRelayPennant(parent: TransformNode) {
+    const pennant = new TransformNode("Bay Four Relay Pennant keepsake", this.scene);
+    pennant.parent = parent;
+    pennant.position.set(-.18, -.01, -.485);
+    pennant.rotation.set(.16, 0, -.19);
+    const orange = this.material("Pennant signal orange canvas", "#d98446");
+    orange.backFaceCulling = false;
+    orange.emissiveColor.set(.20, .065, .018);
+    const blue = this.material("Pennant cobalt print", "#3153a4");
+    blue.backFaceCulling = false;
+    blue.emissiveColor.set(.063, .078, .23);
+    const patch = (name: string, positions: number[], indices: number[], material: StandardMaterial) => {
+      const normals: number[] = [];
+      VertexData.ComputeNormals(positions, indices, normals);
+      const data = new VertexData();
+      data.positions = positions; data.indices = indices; data.normals = normals;
+      const mesh = new Mesh(name, this.scene);
+      data.applyToMesh(mesh);
+      mesh.parent = pennant; mesh.material = material;
+    };
+    patch("Folded pennant cloth", [-.22, .146, 0, -.22, -.135, 0, -.023, .092, -.031, -.023, -.082, -.031, .30, .015, .034],
+      [0, 1, 2, 1, 3, 2, 2, 3, 4], orange);
+    patch("Cobalt double pennant bars", [-.19, .137, -.013, -.136, .122, -.021, -.136, -.113, -.021, -.19, -.128, -.013,
+      -.092, .111, -.028, -.057, .10, -.033, -.057, -.092, -.033, -.092, -.101, -.028], [0, 3, 1, 1, 3, 2, 4, 7, 5, 5, 7, 6], blue);
+    this.mesh("Pennant hoist seam", [.031, .288, .022], [-.226, .006, -.007], blue, pennant);
+    const braid = this.material("Pennant signal braid", "#8b6b48");
+    this.mesh("Pennant tie", [.035, .218, .025], [-.226, .233, .01], braid, pennant).rotation.z = .06;
+    this.mesh("Pennant clasp", [.071, .068, .049], [-.23, .347, .03], orange, pennant);
+    return pennant;
+  }
+
   private project(label: HTMLDivElement, position: Vector3) {
     const result = Vector3.Project(position, Matrix.IdentityReadOnly, this.scene.getTransformMatrix(),
       this.camera.viewport.toGlobal(this.canvas.clientWidth, this.canvas.clientHeight));
@@ -506,7 +542,7 @@ export class GameView {
     label.style.visibility = result.z > 0 && result.z < 1 ? "visible" : "hidden";
   }
 
-  private showLungeLane(x: number, z: number, endX: number, endZ: number) {
+  private showLungeLane(source: string, x: number, z: number, endX: number, endZ: number) {
     const direction = Math.atan2(endZ - z, endX - x);
     const positions: number[] = [];
     const indices: number[] = [];
@@ -535,10 +571,16 @@ export class GameView {
     material.alpha = .87;
     lane.material = material;
     this.effects.push({ mesh: lane, material, position: Vector3.Zero(), time: 0,
-      lasts: ENEMY_WINDUP_TICKS.runner / TICK_RATE, fadeAt: .85 });
+      lasts: ENEMY_WINDUP_TICKS.runner / TICK_RATE, fadeAt: .85, warningSource: source });
   }
 
   react(event: CombatEvent) {
+    if (event.type === "interrupt") {
+      for (const effect of this.effects) {
+        if (effect.warningSource === event.source) effect.time = effect.lasts;
+      }
+      return;
+    }
     if (event.type === "observe" || event.type === "arm" || event.type === "revive") {
       const visual = this.visuals.get(event.source);
       if (visual) visual.reaction = 1;
@@ -580,7 +622,7 @@ export class GameView {
       return;
     }
     if (event.lunge) {
-      if (event.type === "windup") this.showLungeLane(event.x, event.z, event.lunge.x, event.lunge.z);
+      if (event.type === "windup") this.showLungeLane(event.source, event.x, event.z, event.lunge.x, event.lunge.z);
       return;
     }
     if (event.type !== "swing" && event.type !== "windup") return;
@@ -602,7 +644,8 @@ export class GameView {
     mat.emissiveColor = windup ? new Color3(1, .51, .24) : new Color3(.83, .96, .9);
     mat.disableLighting = true; mat.alpha = windup ? .76 : .42;
     ribbon.material = mat;
-    this.effects.push({ mesh: ribbon, material: mat, position: Vector3.Zero(), time: 0, lasts: windup ? .61 : .18 });
+    this.effects.push({ mesh: ribbon, material: mat, position: Vector3.Zero(), time: 0, lasts: windup ? .61 : .18,
+      warningSource: windup ? event.source : undefined });
   }
 
   private poseRunner(parts: Map<string, TransformNode>, actor: ViewActor) {
@@ -783,6 +826,12 @@ export class GameView {
           visual.bayFourTicket.setEnabled(actor.bayFourTicket);
           visual.bayFourTicket.position.z = actor.facing < 0 ? .46 : -.46;
           visual.bayFourTicket.rotation.y = actor.facing < 0 ? Math.PI : 0;
+        }
+        if (actor.relayPennant && visual.creature && !visual.relayPennant) visual.relayPennant = this.makeRelayPennant(visual.creature.node);
+        if (visual.relayPennant) {
+          visual.relayPennant.setEnabled(actor.relayPennant);
+          visual.relayPennant.position.z = actor.facing < 0 ? .485 : -.485;
+          visual.relayPennant.rotation.y = actor.facing < 0 ? Math.PI : 0;
         }
         const target = new Vector3(actor.x, actor.y, actor.z);
         const factor = Vector3.DistanceSquared(target, visual.at) > 14 ? 1 : 1 - Math.exp(-dt * (id === self ? 34 : 13));

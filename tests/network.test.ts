@@ -6,9 +6,10 @@ import { matchMaker } from "@colyseus/core";
 import { runServer } from "../packages/server/src/http.ts";
 import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
-import { BAY_FOUR_TICKET, type Action, type Family, type Mission, type Profile } from "../packages/shared/src/content.ts";
+import { BAY_FOUR_TICKET, RELAY_PENNANT, type Action, type Family, type Mission, type Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
-import { ARCHIVE_CHANNELS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
+import { ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, DEPARTURE_REINFORCEMENT_TICKS,
+  routeMarkers, TERMINAL_READERS_COMPLETE } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
 
@@ -761,6 +762,129 @@ test("First Departure keeps the Switchkeeper across its reinforcement phase and 
     await until("the equipped ticket reaches actor state", () => plaza.state.actors.get(plaza.sessionId)?.bayFourTicket);
     first.send("begin");
     await until("replay resets the approach and reinforcement", () => stage(0, "combat") && [first, other].every((room) => room.state.wave === 0));
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("Bay Four Relay calls interrupt the patrol and unlock the Relay Pennant after both answers", { timeout: 75000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    const party = [alpha, beta];
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      for (const mission of ["chapter", "night", "return", "terminal", "archive", "exchange"] as const) {
+        server.store.reward([id], mission, mission);
+      }
+      if (account === guest) continue;
+      server.store.reward([id], "departure", "departure");
+      assert.equal(server.store.morph(id, "brick", "moth").ok, true);
+      server.store.reward([id], "night-prep", "night");
+      server.store.reward([id], "return-prep", "return");
+      assert.equal(server.store.morph(id, "moth", "brick").ok, true);
+      server.store.reward([id], "chapter-prep", "chapter");
+    }
+    const initial = await Promise.all(party.map((account) => account.profile()));
+    for (const profile of initial) {
+      assert.equal(profile.catalyst, false);
+      assert.deepEqual(profile.catalystProgress, ["chapter"]);
+    }
+    await assert.rejects(guest.sdk.create("mission", { mission: "bayrelay" }), /Clear First Departure/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "bayrelay" }) as Socket);
+    rooms.push(first);
+    await assert.rejects(guest.sdk.joinById(first.roomId), /Clear First Departure/);
+    const other = connectHandlers(await beta.sdk.joinById(first.roomId) as Socket);
+    rooms.push(other);
+    await Promise.all([local(first), local(other)]);
+
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const [west, east] = routeMarkers("bayrelay", 0);
+    const missionState = (status: string) => [first, other].every((room) => room.state.status === status);
+    const enemies = (room: Socket) => [...room.state.actors.values()].filter((actor) => actor.kind !== "player");
+    const observes: number[][] = [[], []];
+    const interrupted: string[][] = [[], []];
+    for (const [index, room] of [first, other].entries()) {
+      room.onMessage("combat", (event: CombatEvent) => {
+        if (event.type === "observe") observes[index].push(event.x);
+        if (event.type === "interrupt") interrupted[index].push(event.source);
+      });
+    }
+    const notices: string[] = [];
+    first.onMessage("notice", (notice: string) => { notices.push(notice); });
+    const recall = async (courier: TestCourier) => {
+      await until("call operator stands idle", () => courier.me.phase === "idle");
+      if (courier.me.armed) courier.send(0, 0, "morph");
+      await until("the call operator's companion is recalled", () => !courier.me.armed && courier.me.phase === "idle");
+    };
+
+    first.send("begin");
+    await until("both players enter Bay Four Relay", () => missionState("combat"));
+    assert.deepEqual(enemies(first).map((enemy) => enemy.kind).sort(), ["guard", "runner", "runner"]);
+    await a.go(west.x, west.z);
+    await until("west operator ready", () => a.me.phase === "idle");
+    if (!a.me.armed) a.send(0, 0, "morph");
+    await until("west operator armed", () => a.me.armed);
+    first.send("interact");
+    await until("the West Call requires recall", () => notices.some((notice) => notice.includes("Recall your partner")));
+    assert.equal(first.state.readerMask, 0);
+    await recall(a);
+    await until("an attack is telegraphed before the call", () => enemies(first).some((enemy) => enemy.phase === "windup"));
+    const before = enemies(first).map((enemy) => enemy.hp);
+    first.send("interact");
+    await until("everyone sees the West Call cancel the patrol's attacks", () => [first, other].every((room) =>
+      room.state.readerMask === west.readerBit && enemies(room).every((enemy) => enemy.phase === "hurt")));
+    for (const room of [first, other]) {
+      assert.deepEqual(enemies(room).map((enemy) => enemy.hp), before);
+      assert.ok(enemies(room).every((enemy) => enemy.age > BAY_RELAY_STAGGER_TICKS - 12 && enemy.age <= BAY_RELAY_STAGGER_TICKS));
+    }
+    const enemyIds = [...first.state.actors.entries()].filter(([, actor]) => actor.kind !== "player").map(([id]) => id).sort();
+    assert.deepEqual(interrupted.map((sources) => sources.sort()), [enemyIds, enemyIds]);
+    first.send("interact");
+    await until("the West Call cannot be repeated", () => notices.some((notice) => notice.includes("already checked in")));
+    assert.deepEqual(observes, [[west.x], [west.x]]);
+
+    await fight([a, b], "signal", 36000);
+    await until("both players still have a call left after the patrol is clear", () => missionState("signal"));
+    assert.equal(first.state.readerMask, west.readerBit);
+    for (const account of party) assert.equal((await account.profile()).bayRelayComplete, undefined);
+    const plaza = connectHandlers(await alpha.sdk.joinOrCreate("plaza") as Socket);
+    rooms.push(plaza);
+    await local(plaza);
+    let updated: Profile | undefined;
+    plaza.onMessage("profile", (profile: Profile) => { updated = profile; });
+    const equipPennant = async () => {
+      updated = undefined;
+      plaza.send("customize", { trinket: RELAY_PENNANT });
+      return until("the companion room replies to the pennant choice", () => updated);
+    };
+    assert.equal((await equipPennant()).trinket, initial[0].trinket);
+
+    const operator = b.me.hp > 0 ? b : a;
+    await operator.go(east.x, east.z);
+    await recall(operator);
+    operator.room.send("interact");
+    operator.room.send("interact");
+    await until("the East Call completes the contract", () => missionState("complete") && first.state.readerMask === BAY_RELAY_CALLS_COMPLETE);
+    assert.deepEqual(observes, [[west.x, east.x], [west.x, east.x]]);
+    for (const [index, account] of party.entries()) {
+      const profile = await account.profile();
+      assert.equal(profile.bayRelayComplete, true);
+      assert.equal(profile.battleXp, initial[index].battleXp + 32);
+      assert.equal(profile.trinket, initial[index].trinket);
+      assert.deepEqual(profile.lore, initial[index].lore);
+      assert.deepEqual(profile.clears, initial[index].clears);
+      assert.equal(profile.bond, initial[index].bond);
+      assert.equal(profile.catalyst, false);
+      assert.deepEqual(profile.catalystProgress, initial[index].catalystProgress);
+    }
+    assert.equal((await equipPennant()).trinket, RELAY_PENNANT);
+    await until("the equipped pennant reaches actor state", () => plaza.state.actors.get(plaza.sessionId)?.relayPennant);
+    first.send("begin");
+    await until("replay resets both call boxes", () => missionState("combat") && [first, other].every((room) => room.state.readerMask === 0));
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

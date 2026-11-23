@@ -41,6 +41,8 @@ Clear Dead Line Exchange to unlock **First Departure**. Set the Departure Signal
 
 Clear East Terminal to unlock **Terminal Watch** in Dispatch. This repeatable contract has two patrols and awards 28 battle XP per clear. Keep the whole party on its feet through both patrols to unlock the **Signal Tag**, which you can equip in the companion room. A rescue can save the run after a knockdown.
 
+Clear First Departure to unlock **Bay Four Relay** in Dispatch. Use West Call and East Call with your companion recalled. Each call briefly staggers the patrol, giving a teammate time to strike or reach a downed courier. You can also link the calls after the fight. Each clear awards 32 battle XP, and the first unlocks the **Relay Pennant** in the companion room.
+
 The companion keeps its name, personality, bond, trinket, room theme, memories, former forms, and mastery records through a morph. Battle XP starts at zero for the new form. Its basic chain and signature skill are available immediately. Complete a mastery drill and reach rank three to use the follow-up. Earn another catalyst by clearing two distinct missions and carry one at a time.
 
 In the companion room, rename your partner, decorate its room, choose a keepsake, and play together. Inspect the closure plaque, maintenance log, and broken announcement to record the history of the Last Crossing. Open Sound to hear the original score and gameplay cues.

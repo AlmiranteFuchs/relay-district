@@ -27,13 +27,14 @@ export class ActorState extends Schema {
   declare rescueTicks: number;
   declare signalTag: boolean;
   declare bayFourTicket: boolean;
+  declare relayPennant: boolean;
 
   constructor() {
     super();
     Object.assign(this, { x: 0, y: 0, z: 0, facing: 1, name: "", companion: "", family: "moth", kind: "player",
       hp: 125, maxHp: 125, energy: 100, armed: false, connected: true, phase: "idle", age: 0,
       duration: 0, combo: 0, step: 0, ack: 0, moving: false, rank: 1, rescued: false, rescueTarget: "", rescueTicks: 0,
-      signalTag: false, bayFourTicket: false });
+      signalTag: false, bayFourTicket: false, relayPennant: false });
   }
 }
 defineTypes(ActorState, {
@@ -41,7 +42,7 @@ defineTypes(ActorState, {
   family: "string", kind: "string", hp: "uint16", maxHp: "uint16", energy: "float32",
   armed: "boolean", connected: "boolean", phase: "string", age: "uint16", duration: "uint16",
   combo: "uint16", step: "uint8", ack: "uint32", moving: "boolean", rank: "uint16",
-  rescued: "boolean", rescueTarget: "string", rescueTicks: "uint8", signalTag: "boolean", bayFourTicket: "boolean",
+  rescued: "boolean", rescueTarget: "string", rescueTicks: "uint8", signalTag: "boolean", bayFourTicket: "boolean", relayPennant: "boolean",
 });
 
 export class GameState extends Schema {

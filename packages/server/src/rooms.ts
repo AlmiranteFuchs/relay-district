@@ -1,13 +1,13 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
-  battleRank, BAY_FOUR_TICKET, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, SIGNAL_TAG, TICK_RATE,
+  battleRank, BAY_FOUR_TICKET, isFamily, isMission, JOBS, LORE, missionLockReason, PATCH_MS, RELAY_PENNANT, SIGNAL_TAG, TICK_RATE,
   type Action, type Family, type Mission, type Profile,
 } from "../../shared/src/content.ts";
 import { canRescueIn, makeEnemy, makePlayer, resetPlayer, rescueDistance, RESCUE_HEALTH, RESCUE_RANGE, RESCUE_TICKS,
   sanitizeAxes, stepEnemy, stepPlayer, type CombatEvent, type Enemy, type EnemyKind, type Input, type Player } from "../../shared/src/combat.ts";
-import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers,
-  TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
+import { ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
+  DEPARTURE_REINFORCEMENT_TICKS, nearestMarker, PLAZA, routeMarkers, TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, GameState } from "./wire.ts";
 import type { Session, Store } from "./store.ts";
 
@@ -118,6 +118,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     const actor = this.state.actors.get(entry.player.id)!;
     actor.signalTag = profile.trinket === SIGNAL_TAG;
     actor.bayFourTicket = profile.trinket === BAY_FOUR_TICKET;
+    actor.relayPennant = profile.trinket === RELAY_PENNANT;
     if (entry.connected) entry.client.send("profile", profile);
   }
 
@@ -262,6 +263,7 @@ const departureWaves = [
   wave(["keeper", 8.35, -.85]),
   wave(["runner", -5.8, -2.15]),
 ];
+const bayRelayPatrol = wave(["runner", -2.85, -1.3], ["guard", 4.75, .9], ["runner", 7.25, -2.35]);
 const watchWaves = [
   wave(["skitter", -2.5, 2.1], ["guard", 3.8, -1.7]),
   wave(["keeper", 4.5, -.9], ["skitter", -5.8, 2.9]),
@@ -362,6 +364,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "departure") {
       this.spawn(departureWaves[0]);
       this.story(JOBS.departure.title, "Bay 4 has been waiting for both halves of the fare. Clear the concourse and bring your recalled partner to the departure signal.");
+    } else if (this.mission === "bayrelay") {
+      this.spawn(bayRelayPatrol);
+      this.story(JOBS.bayrelay.title, "Dispatch needs both call boxes checked. Use each box with a recalled partner. During combat, each call interrupts the patrol once. Clear the platform to sign off.");
     } else if (this.mission === "watch") {
       this.spawn(watchWaves[0]);
       this.story(JOBS.watch.title, "Dispatch needs the night crew to keep this platform open. Clear both patrols. If everyone stays on their feet, take a Signal Tag home for your partner.");
@@ -494,6 +499,15 @@ export class MissionRoom extends GameRoom {
       }
       return;
     }
+    if (this.mission === "bayrelay") {
+      if (this.state.readerMask === BAY_RELAY_CALLS_COMPLETE) {
+        this.finish();
+      } else {
+        this.state.status = "signal";
+        this.story("Patrol clear", "Recall your partner and use any call box still waiting for an answer.");
+      }
+      return;
+    }
     if (this.mission === "watch" && this.state.wave === 0) {
       this.state.wave = 1;
       this.state.status = "interlude";
@@ -575,6 +589,8 @@ export class MissionRoom extends GameRoom {
       this.interactTerminal(entry, point);
     } else if (this.mission === "archive") {
       this.interactArchive(entry, point);
+    } else if (this.mission === "bayrelay") {
+      this.interactBayRelay(entry, point);
     } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register"
       || this.mission === "exchange" || this.mission === "departure")) {
       this.interactSignal(entry, point);
@@ -611,6 +627,30 @@ export class MissionRoom extends GameRoom {
     } else {
       this.story(point.title, "Your partner's pulse registers one half of the fare. Bring a recalled partner to the other reader.");
     }
+  }
+
+  private interactBayRelay(entry: Entry, point: Marker) {
+    const { readerBit } = point;
+    if (!readerBit || (this.state.status !== "combat" && this.state.status !== "signal")) return;
+    if (this.state.readerMask & readerBit) {
+      entry.client.send("notice", "This call box has already checked in.");
+      return;
+    }
+    if (!this.hearSignal(entry, point)) return;
+    this.state.readerMask |= readerBit;
+    if (this.state.status === "signal") {
+      if (this.state.readerMask === BAY_RELAY_CALLS_COMPLETE) this.finish();
+      else entry.client.send("notice", point.title + " recorded. Check the other call box.");
+      return;
+    }
+    for (const enemy of this.enemies.values()) {
+      if (!enemy.hp) continue;
+      enemy.ticks = enemy.phase === "hurt" ? Math.max(enemy.ticks, BAY_RELAY_STAGGER_TICKS) : BAY_RELAY_STAGGER_TICKS;
+      enemy.phase = "hurt";
+      enemy.target = "";
+      this.broadcast("combat", { type: "interrupt", source: enemy.id, x: enemy.x, z: enemy.z } satisfies CombatEvent);
+    }
+    this.broadcast("notice", point.title + " recorded. The patrol is staggered.");
   }
 
   private interactSignal(entry: Entry, point: Marker) {
@@ -694,6 +734,8 @@ export class MissionRoom extends GameRoom {
       this.story("The watch is over", this.watchCommended
         ? "Everyone stayed on their feet. The Signal Tag is available in your companion room."
         : "The terminal is safe. To earn the Signal Tag, complete both patrols without anyone going down.");
+    } else if (this.mission === "bayrelay") {
+      this.story("Both calls received", "Bay 4 is ready for the next shift. The Relay Pennant is available in your companion room.");
     } else this.story("Signal recovered", "A new form is recorded in your partner’s journal. Explore it at the plaza workbench.");
   }
 }

@@ -14,13 +14,13 @@ export class DepartureScenery {
   private readonly root: TransformNode;
   private readonly previousSky;
   private readonly materials: StandardMaterial[] = [];
-  private readonly stations: StandardMaterial[] = [];
-  private readonly train: TransformNode;
+  private readonly stations: { lamp: StandardMaterial; bit?: number; screen?: DynamicTexture; lit?: boolean }[] = [];
+  private readonly train?: TransformNode;
   private readonly board: DynamicTexture;
   private boardText = "";
   private arrivalAt?: number;
 
-  constructor(scene: Scene, root: TransformNode, markers: Marker[]) {
+  constructor(scene: Scene, root: TransformNode, markers: Marker[], relay = false) {
     this.scene = scene;
     this.root = root;
     this.previousSky = scene.clearColor.clone();
@@ -58,7 +58,7 @@ export class DepartureScenery {
     this.box("Departure board housing", 12.72, 1.26, .26, 0, 3.93, 6.7, metal);
     this.face("Departure board lettering", 12.51, 1.08, 0, 3.93, 6.56, material);
     this.box("Board hanger", 12, .77, .12, 0, 4.43, 6.74, metal);
-    this.train = this.buildTrain(metal);
+    if (!relay) this.train = this.buildTrain(metal);
     for (const marker of markers) this.station(marker, enamel, metal, trim);
   }
 
@@ -181,13 +181,22 @@ export class DepartureScenery {
   }
 
   private station(marker: Marker, enamel: StandardMaterial, metal: StandardMaterial, trim: StandardMaterial) {
-    const { id, x, z } = marker;
+    const { id, x, z, readerBit } = marker;
     this.box(id + " post", .79, .53, .55, x, .275, z + .082, enamel);
     this.box(id + " bevel", 1.14, .16, .66, x, .55, z + .05, metal).rotation.x = -.19;
     this.box(id + " instrument face", .98, .045, .54, x, .632, z + .039, trim).rotation.x = -.19;
     const signal = this.material(id + " lamp", "#79685a");
     this.box(id + " indicator", .83, .092, .062, x, .556, z - .298, signal);
-    if (id === "departure-boarding") {
+    let screen: DynamicTexture | undefined;
+    if (readerBit) {
+      const painted = this.paint(id + " call display", 128, 64);
+      painted.material.disableLighting = true;
+      painted.material.diffuseTexture = null;
+      painted.material.emissiveTexture = painted.texture;
+      this.box(id + " meter casing", 1.56, .42, .14, x, .815, z + .066, enamel).rotation.x = .54;
+      this.face(id + " meter screen", 1.42, .34, x, .86, z - .019, painted.material).rotation.x = .54;
+      screen = painted.texture;
+    } else if (id === "departure-boarding") {
       this.box("Boarding reader ticket slot", .39, .038, .065, x, .668, z + .06, metal);
       this.box("Boarding reader receipt", .27, .015, .17, x, .671, z - .025, trim);
     } else {
@@ -196,15 +205,49 @@ export class DepartureScenery {
     }
     const ring = MeshBuilder.CreateTorus(id + " locator", { diameter: 1.76, thickness: .054, tessellation: 16 }, this.scene);
     ring.parent = this.root; ring.position.set(x, .033, z); ring.material = signal;
-    this.stations.push(signal);
+    this.stations.push({ lamp: signal, bit: readerBit, screen });
   }
 
   update(world: WorldView, time: number) {
     const complete = world.status === "complete";
     const ready = world.status === "signal" || complete;
-    const title = complete ? this.moveTrain(time)
-      : world.stage === 2 && ready ? "BOARDING" : world.stage === 1 && world.wave === 1 ? "LINE HOLD"
-      : ready ? "SIGNAL READY" : "ON HOLD";
+    for (const station of this.stations) {
+      const read = station.bit ? (world.readerMask & station.bit) !== 0 : ready;
+      if (read === station.lit) continue;
+      station.lit = read;
+      const lamp = station.lamp;
+      if (read) {
+        lamp.diffuseColor.set(.64, .82, .52);
+        lamp.emissiveColor.set(.27, .49, .17);
+      } else if (station.bit) {
+        lamp.diffuseColor.set(.48, .72, .82);
+        lamp.emissiveColor.set(.12, .36, .48);
+      } else {
+        lamp.diffuseColor.set(.46, .38, .31);
+        lamp.emissiveColor.set(.15, .083, .059);
+      }
+      if (station.screen) {
+        const ctx = station.screen.getContext();
+        const ink = read ? "#d9efaf" : "#dbf5ff";
+        ctx.fillStyle = read ? "#345344" : "#234a65"; ctx.fillRect(0, 0, 128, 64);
+        ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.strokeRect(4, 4, 120, 56);
+        ctx.beginPath(); ctx.lineWidth = 4;
+        if (read) { ctx.moveTo(15, 32); ctx.lineTo(22, 40); ctx.lineTo(35, 23); }
+        else { ctx.moveTo(18, 23); ctx.lineTo(34, 32); ctx.lineTo(18, 41); ctx.closePath(); }
+        ctx.stroke();
+        ctx.fillStyle = ink; ctx.font = "bold 29px Tahoma"; ctx.fillText(read ? "READ" : "CALL", 43, 43, 78);
+        station.screen.update();
+      }
+    }
+
+    const relay = world.mission === "bayrelay";
+    const remaining = this.stations.filter(({ bit, lit }) => bit && !lit);
+    const title = relay
+      ? complete ? "RELAY MATCHED" : remaining.length === 2 ? "CALL WEST AND EAST"
+        : remaining.length === 1 ? `CALL ${remaining[0].bit === 1 ? "WEST" : "EAST"}` : "DEFEND PLATFORM"
+      : complete && this.train ? this.moveTrain(this.train, time)
+        : world.stage === 2 && ready ? "BOARDING" : world.stage === 1 && world.wave === 1 ? "LINE HOLD"
+        : ready ? "SIGNAL READY" : "ON HOLD";
     if (title === this.boardText) return;
     this.boardText = title;
     const ctx = this.board.getContext();
@@ -212,33 +255,29 @@ export class DepartureScenery {
     ctx.strokeStyle = "#8ba39d"; ctx.strokeRect(4, 4, 504, 88);
     ctx.fillStyle = "#355461"; ctx.fillRect(12, 12, 103, 72);
     ctx.fillStyle = "#e5e5c7"; ctx.font = "bold 27px Tahoma"; ctx.fillText("BAY 4", 21, 57, 85);
-    ctx.fillStyle = "#d1ae74"; ctx.font = "bold 24px Tahoma"; ctx.fillText("05:20", 134, 42, 78);
-    ctx.fillStyle = "#e6e2c1"; ctx.fillText("FIRST DEPARTURE", 224, 42, 264);
+    ctx.fillStyle = "#d1ae74"; ctx.font = "bold 24px Tahoma"; ctx.fillText(relay ? "CREW" : "05:20", 134, 42, 78);
+    ctx.fillStyle = "#e6e2c1"; ctx.fillText(relay ? "BAY FOUR RELAY" : "FIRST DEPARTURE", 224, 42, 264);
     ctx.fillStyle = "#172f3b"; ctx.fillRect(127, 52, 372, 32);
-    ctx.fillStyle = ready ? "#d2e8a8" : "#d5b181"; ctx.font = "bold 19px Tahoma";
+    ctx.fillStyle = relay && remaining.length ? "#a6dbea" : ready ? "#d2e8a8" : "#d5b181"; ctx.font = "bold 19px Tahoma";
     ctx.fillText(title, 134, 74, 354);
     this.board.update();
-    for (const material of this.stations) {
-      material.diffuseColor.set(ready ? .64 : .46, ready ? .82 : .38, ready ? .52 : .31);
-      material.emissiveColor.set(ready ? .27 : .15, ready ? .49 : .083, ready ? .17 : .059);
-    }
   }
 
-  private moveTrain(time: number) {
+  private moveTrain(train: TransformNode, time: number) {
     this.arrivalAt ??= time;
     const elapsed = time - this.arrivalAt;
     if (elapsed < arrivalSeconds) {
       const progress = elapsed / arrivalSeconds;
-      this.train.setEnabled(true);
-      this.train.position.x = trainStart + (trainStop - trainStart) * (1 - (1 - progress) ** 2.4);
+      train.setEnabled(true);
+      train.position.x = trainStart + (trainStop - trainStart) * (1 - (1 - progress) ** 2.4);
       return "ARRIVING";
     }
     const departureProgress = Math.max(0, (elapsed - arrivalSeconds - dwellSeconds) / departureSeconds);
     if (departureProgress >= 1) {
-      this.train.setEnabled(false);
+      train.setEnabled(false);
       return "DEPARTED";
     }
-    this.train.position.x = trainStop + (trainExit - trainStop) * departureProgress ** 1.72;
+    train.position.x = trainStop + (trainExit - trainStop) * departureProgress ** 1.72;
     return departureProgress === 0 ? "ARRIVED" : "DEPARTING";
   }
 

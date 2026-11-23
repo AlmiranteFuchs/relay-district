@@ -33,7 +33,7 @@ test("authored courier clips follow combat ticks and keep each actor's weapon so
       phase: "idle", family: "moth", age: 0, duration: 0, step: 0, moving: false, x: 0, y: 0, z: 0,
       facing: 1, name: "Courier", companion: "Neri", kind: "player", hp: 125, maxHp: 125, energy: 100,
       armed: false, connected: true, combo: 0, ack: 0, rank: 1, rescued: false, rescueTarget: "", rescueTicks: 0,
-      signalTag: false, bayFourTicket: false,
+      signalTag: false, bayFourTicket: false, relayPennant: false,
     };
     second.animation.pose(state, 0);
     const attack: ViewActor = { ...state, phase: "attack", armed: true, age: 9, duration: 26 };

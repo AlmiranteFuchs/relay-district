@@ -13,7 +13,8 @@ The project has a shared plaza for up to 16 LAN players, four-player instance ro
 | Optional contracts | Terminal Watch is repeatable after East Terminal. Two SDK clients verified a wipe, a rescue-assisted clear, and a clean replay that unlocks the Signal Tag. Chrome verified the patrol cues and equipping the keepsake. SQLite coverage verifies restart and duplicate rewards. | Add support contribution and playtest the patrols across the four companion forms. |
 | Tidegate Signal Archive | The fifth chapter adds two patrols, alternating live channel readers, and a journal recording that leads to Dead Line Exchange. Solo and two-player SDK clients cleared both fights. Co-op checks cover reconnecting after a scan and one reward per clear. Chrome checks cover the prompts at widescreen and 4:3. | Add audio playback for the recording in the companion room and run a fresh-player walkthrough. |
 | Dead Line Exchange | The sixth chapter introduces the Cable Runner’s committed charge, then pairs it with a Gateback. Solo, two-player, and four-client SDK runs cleared both fights. The four-client test used 100 ms simulated round-trip latency on one machine. Chrome verified a keyboard sidestep, the companion interactions, and the crew log. | Playtest the enemy with mixed weapon families and add a replay contract after the first departure. |
-| First Departure | Solo and two-player SDK runs cleared Bay Four and verified the Switchkeeper's health carries through the reinforcement warning. Chrome verified train arrival and departure, ticket equipment after reload, and the companion's audible room response. SQLite coverage verifies the one-time arc reward and the equipped ticket after a restart. | Add a separate replay contract and walk a new player through the arc without seeded progress. |
+| First Departure | Solo and two-player SDK runs cleared Bay Four and verified the Switchkeeper's health carries through the reinforcement warning. Chrome verified train arrival and departure, ticket equipment after reload, and the companion's audible room response. SQLite coverage verifies the one-time arc reward and the equipped ticket after a restart. | Walk a new player through the arc without seeded progress. |
+| Bay Four Relay | The separate replay contract gives players two opportunities to interrupt the patrol for allies. A recalled companion can use either call box. SDK tests verify the shared interrupt, solo clear, and reward handling. Chrome verifies the reader cues and equipping the Relay Pennant after a clear. | Playtest how parties use the openings across different weapon families and extend support recognition to other replay routes. |
 
 ## Design references
 
@@ -62,7 +63,7 @@ The chapter, companion, equipment, and social designs below are Relay District p
 
 ## After First Departure
 
-The finale restores the partner records and closes the Last Crossing arc. The next replay milestone adds a separate Bay Four contract with a new formation and a visible reward, alongside improvements to party finding and companion room interactions.
+The finale restores the partner records and closes the Last Crossing arc. Bay Four Relay adds a separate replay contract with a different formation and a companion keepsake. The next plaza milestone gives players a way to find and assemble a party in the game.
 
 ## How to mark progress
 

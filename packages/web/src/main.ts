@@ -114,7 +114,7 @@ function capture(state: Wire) {
       armed: entry.armed, connected: entry.connected, phase: entry.phase, age: entry.age, duration: entry.duration,
       combo: entry.combo, step: entry.step, ack: entry.ack, moving: entry.moving, rank: entry.rank,
       rescued: entry.rescued, rescueTarget: entry.rescueTarget, rescueTicks: entry.rescueTicks,
-      signalTag: entry.signalTag, bayFourTicket: entry.bayFourTicket,
+      signalTag: entry.signalTag, bayFourTicket: entry.bayFourTicket, relayPennant: entry.relayPennant,
     });
   });
   return {
@@ -315,6 +315,7 @@ function signalObjective(world: WorldView) {
   if (world.mission === "departure") return world.stage === 0
     ? "Recall your companion and set the Departure Signal."
     : "Bring your recalled companion to the Boarding Reader.";
+  if (world.mission === "bayrelay") return bayRelayObjective(world);
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
   if (!world.readerMask) return "Bring your recalled companion to both fare readers.";
@@ -332,6 +333,15 @@ function archiveRouteObjective(world: WorldView) {
     : live.title + " live. Scan it with your companion recalled.";
 }
 
+function bayRelayObjective(world: WorldView) {
+  const waiting = routeMarkers("bayrelay", world.stage)
+    .filter(({ readerBit }) => readerBit && !(world.readerMask & readerBit))
+    .map(({ title }) => title);
+  if (!waiting.length) return "Both calls are linked. Clear the remaining patrol.";
+  const goal = "Link " + waiting.join(" and ") + " with your companion recalled.";
+  return world.status === "combat" ? goal + " Each call staggers the patrol." : goal;
+}
+
 function stationPrompt(world: WorldView, actor: ViewActor) {
   const point = nearestMarker(markers(), actor.x, actor.z);
   if (!point || !actor.hp) return "";
@@ -347,7 +357,11 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
       if (point.readerBit !== (1 << world.wave)) return point.title + " • Waiting for signal";
     }
   }
-  const recall = world.mission === "archive" || world.status === "signal" && (world.mission === "terminal"
+  if (world.mission === "bayrelay") {
+    if (world.status !== "combat" && world.status !== "signal") return "";
+    if (point.readerBit && (world.readerMask & point.readerBit)) return point.title + " • Linked";
+  }
+  const recall = world.mission === "archive" || world.mission === "bayrelay" || world.status === "signal" && (world.mission === "terminal"
     || world.mission === "exchange" || world.mission === "departure"
     || point.id === "register" || point.id === "signal" && world.mission === "return");
   return recall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title;
@@ -381,6 +395,7 @@ function updateHUD(actor?: ViewActor) {
       lobby: "Share room code " + world.code + ", then start the job.",
       approach: world.mission === "night" ? "Follow the train along Platform 07." : "Read the maintenance log or head down the service lane.",
       combat: world.mission === "watch" ? `Patrol ${world.wave + 1} of 2. Clear the lane.`
+        : world.mission === "bayrelay" ? bayRelayObjective(world)
         : world.mission === "archive" ? world.stage === 0 ? "Clear the archive entrance." : "Defend the archive while the playback deck spins up."
         : world.mission === "exchange" ? world.stage === 0 ? "Step off the Cable Runner’s marked line, then strike during recovery."
           : "Cover the rear lane while the transfer line powers up."

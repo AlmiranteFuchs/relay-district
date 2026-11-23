@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { availableTrinkets, JOBS, MORPH_CLEARS, ROOM_THEMES, TERMINAL_WATCH_XP, TRINKETS, isFamily,
+import { availableTrinkets, BAY_RELAY_XP, JOBS, MORPH_CLEARS, ROOM_THEMES, TERMINAL_WATCH_XP, TRINKETS, isFamily,
   type Family, type Lore, type Mission, type Profile } from "../../shared/src/content.ts";
 
 interface Row { id: string; profile: string; cared_at: number }
@@ -155,6 +155,12 @@ export class Store {
         if (mission === "watch") {
           profile.battleXp += TERMINAL_WATCH_XP;
           if (options.watchCommended) profile.watchCommendation = true;
+          this.save(id, profile);
+          continue;
+        }
+        if (mission === "bayrelay") {
+          profile.battleXp += BAY_RELAY_XP;
+          profile.bayRelayComplete = true;
           this.save(id, profile);
           continue;
         }

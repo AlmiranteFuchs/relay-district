@@ -37,6 +37,12 @@ const departureMarkers: Marker[][] = [
   [],
   [{ id: "departure-boarding", x: 8.2, z: 2.7, title: "Boarding Reader" }],
 ];
+export const BAY_RELAY_CALLS_COMPLETE = 0b11;
+export const BAY_RELAY_STAGGER_TICKS = 40;
+const bayRelayMarkers: Marker[] = [
+  { id: "relay-west", x: -7.25, z: 2.7, title: "West Call", readerBit: 0b01 },
+  { id: "relay-east", x: 7.65, z: 2.7, title: "East Call", readerBit: 0b10 },
+];
 
 export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "night") return [{ id: "register", x: 8.25, z: 2.25, title: "Return Register" }];
@@ -45,6 +51,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "archive") return archiveMarkers[stage] ?? [];
   if (mission === "exchange") return exchangeMarkers[stage] ?? [];
   if (mission === "departure") return departureMarkers[stage] ?? [];
+  if (mission === "bayrelay") return bayRelayMarkers;
   if (mission !== "chapter") return [];
   return stage === 0
     ? [
