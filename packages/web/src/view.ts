@@ -1,14 +1,15 @@
 import {
   Color3, Color4, DirectionalLight, DynamicTexture, Engine, FreeCamera, HemisphericLight,
-  Matrix, Mesh, MeshBuilder, Scene, StandardMaterial, TransformNode, Vector3,
+  Matrix, Mesh, MeshBuilder, Scene, StandardMaterial, TransformNode, Vector3, VertexData,
 } from "@babylonjs/core";
-import { FORMS, type Family } from "../../shared/src/content.ts";
-import { ENEMY_WINDUP_TICKS, type CombatEvent } from "../../shared/src/combat.ts";
+import { FORMS, TICK_RATE, type Family } from "../../shared/src/content.ts";
+import { ENEMY_WINDUP_TICKS, RUNNER_HIT_RADIUS, RUNNER_LUNGE_TICKS, type CombatEvent } from "../../shared/src/combat.ts";
 import { TERMINAL_READERS_COMPLETE, type Marker } from "../../shared/src/scene.ts";
 import { MothAnimation } from "./moth-animation.ts";
 import { instantiateActorModel, loadModelAsset, type ActorModel, type ModelAsset } from "./model-assets.ts";
 import { MODEL_SLOTS, type ModelSlot } from "./model-replacements.ts";
 import { ArchiveScenery } from "./archive-view.ts";
+import { ExchangeScenery } from "./exchange-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -36,7 +37,7 @@ interface Visual {
   labelText: Text;
   bar?: HTMLElement;
 }
-interface Effect { mesh?: Mesh; label?: HTMLDivElement; position: Vector3; time: number; lasts: number; material?: StandardMaterial }
+interface Effect { mesh?: Mesh; label?: HTMLDivElement; position: Vector3; time: number; lasts: number; material?: StandardMaterial; fadeAt?: number }
 
 function makeLabel(parent: HTMLElement, className = "") {
   const label = document.createElement("div");
@@ -55,7 +56,7 @@ export class GameView {
   private models = new Map<ModelSlot, ModelAsset>();
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
-  private archive?: ArchiveScenery;
+  private missionScenery?: ArchiveScenery | ExchangeScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -262,8 +263,8 @@ export class GameView {
     if (this.place === id) return;
     this.place = id;
     this.scenery?.dispose();
-    this.archive?.dispose();
-    this.archive = undefined;
+    this.missionScenery?.dispose();
+    this.missionScenery = undefined;
     for (const label of this.labels.values()) label.remove();
     this.labels.clear();
     for (const marker of markers) {
@@ -272,8 +273,9 @@ export class GameView {
       this.labels.set(marker.id, label);
     }
     const root = this.scenery = new TransformNode("District architecture", this.scene);
-    if (world.mission === "archive") {
-      this.archive = new ArchiveScenery(this.scene, root, world.stage, markers);
+    if (world.mission === "archive" || world.mission === "exchange") {
+      this.missionScenery = world.mission === "archive" ? new ArchiveScenery(this.scene, root, world.stage, markers)
+        : new ExchangeScenery(this.scene, root, world.stage, markers);
       return;
     }
     const plaza = world.kind === "plaza";
@@ -389,7 +391,7 @@ export class GameView {
 
   private visual(actor: ViewActor) {
     const isPlayer = actor.kind === "player";
-    const source = isPlayer ? "courier" : actor.kind === "skitter" || actor.kind === "keeper" ? actor.kind : "guard";
+    const source = isPlayer ? "courier" : actor.kind === "skitter" || actor.kind === "keeper" || actor.kind === "runner" ? actor.kind : "guard";
     const body = this.instantiate(source);
     if (actor.kind === "dummy") body.node.scaling.setAll(1.18);
     const shadow = MeshBuilder.CreateDisc("Ground contact", { radius: isPlayer ? .43 : .58, tessellation: 13 }, this.scene);
@@ -460,6 +462,38 @@ export class GameView {
     label.style.visibility = result.z > 0 && result.z < 1 ? "visible" : "hidden";
   }
 
+  private showLungeLane(x: number, z: number, endX: number, endZ: number) {
+    const direction = Math.atan2(endZ - z, endX - x);
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (const [cx, cz, angle] of [[x, z, direction + Math.PI / 2], [endX, endZ, direction - Math.PI / 2]]) {
+      for (let segment = 0; segment <= 8; segment++) {
+        const a = angle + Math.PI * segment / 8;
+        for (const radius of [RUNNER_HIT_RADIUS, RUNNER_HIT_RADIUS - .074]) {
+          positions.push(cx + Math.cos(a) * radius, .044, cz + Math.sin(a) * radius);
+        }
+      }
+    }
+    const vertices = positions.length / 3;
+    for (let outer = 0; outer < vertices; outer += 2) {
+      const next = (outer + 2) % vertices;
+      indices.push(outer, outer + 1, next, outer + 1, next + 1, next);
+    }
+    const lane = new Mesh("Locked runner lane", this.scene);
+    const data = new VertexData();
+    data.positions = positions;
+    data.indices = indices;
+    data.applyToMesh(lane);
+    const material = new StandardMaterial("Runner warning enamel", this.scene);
+    material.disableLighting = true;
+    material.backFaceCulling = false;
+    material.emissiveColor.set(1, .55, .21);
+    material.alpha = .87;
+    lane.material = material;
+    this.effects.push({ mesh: lane, material, position: Vector3.Zero(), time: 0,
+      lasts: ENEMY_WINDUP_TICKS.runner / TICK_RATE, fadeAt: .85 });
+  }
+
   react(event: CombatEvent) {
     if (event.type === "observe" || event.type === "arm" || event.type === "revive") {
       const visual = this.visuals.get(event.source);
@@ -501,6 +535,10 @@ export class GameView {
       this.effects.push({ label: number, position: new Vector3(event.x, 1.42, event.z), time: 0, lasts: .52 });
       return;
     }
+    if (event.lunge) {
+      if (event.type === "windup") this.showLungeLane(event.x, event.z, event.lunge.x, event.lunge.z);
+      return;
+    }
     if (event.type !== "swing" && event.type !== "windup") return;
     const actor = this.visuals.get(event.source);
     if (!actor) return;
@@ -521,6 +559,27 @@ export class GameView {
     mat.disableLighting = true; mat.alpha = windup ? .76 : .42;
     ribbon.material = mat;
     this.effects.push({ mesh: ribbon, material: mat, position: Vector3.Zero(), time: 0, lasts: windup ? .61 : .18 });
+  }
+
+  private poseRunner(parts: Map<string, TransformNode>, actor: ViewActor) {
+    const draw = actor.phase === "windup" ? Math.max(0, 1 - actor.age / ENEMY_WINDUP_TICKS.runner) : 0;
+    const coil = draw * draw * (3 - 2 * draw);
+    const run = actor.phase === "active" ? Math.min(1, actor.age / 4) * Math.min(1, (RUNNER_LUNGE_TICKS + 1 - actor.age) / 2) : 0;
+    const recovery = actor.phase === "recover" ? Math.min(1, actor.age / 40) : 0;
+    const gait = actor.moving ? Math.sin(this.clock * 13.5) : 0;
+    const limbBeat = Math.sin(this.clock * 5) * .028;
+    const torso = parts.get("organism");
+    if (torso) {
+      const pose = torso.metadata ??= {};
+      pose.restHeight ??= torso.position.y;
+      torso.position.y = pose.restHeight - coil * .11 + run * .055 - recovery * .10 + Math.abs(gait) * .075;
+      torso.rotation.z = .29 * coil - .43 * run - .20 * recovery + gait * .075;
+    }
+    for (const [suffix, side] of [["near", 1], ["far", -1]] as const) {
+      parts.get("leg_" + suffix)?.rotation.set(0, 0, side * gait * .57 - .30 * coil + side * (.10 * coil + .68 * run) + .23 * recovery);
+      parts.get("plate_" + suffix)?.rotation.set(side * (limbBeat - .93 * coil + .29 * run), 0, -.12 * coil + .26 * recovery);
+      parts.get("claw_" + suffix)?.rotation.set(0, side * (.12 + .46 * coil - .36 * run + .095 * recovery), -.11 * coil + .22 * run);
+    }
   }
 
   private pose(visual: Visual, actor: ViewActor, dt: number, rescueTarget?: ViewActor) {
@@ -602,6 +661,8 @@ export class GameView {
         weapon.node.rotation.set(actor.phase === "mastery" ? progress * 1.75 : 0, move ? side * (progress - .39) * 1.7 : -.35,
           move ? accent * side * .54 - .24 : Math.sin(t * 3) * .055 + .22);
       }
+    } else if (actor.kind === "runner") {
+      this.poseRunner(parts, actor);
     } else {
       const crawler = actor.kind === "skitter";
       const keeper = actor.kind === "keeper";
@@ -636,7 +697,7 @@ export class GameView {
       this.camera.position.x += (focus + .4 - this.camera.position.x) * (1 - Math.exp(-dt * 4));
       this.camera.setTarget(new Vector3(this.camera.position.x - .4, .7, -.29));
       this.setPlace(world, markers);
-      this.archive?.update(world, this.clock);
+      this.missionScenery?.update(world, this.clock);
       const junctionLamp = world.mission === "return" ? this.palette.get("Turnout lamp") : undefined;
       if (junctionLamp) {
         const routeClear = world.wave === 1 && (world.status === "signal" || world.status === "complete");
@@ -687,7 +748,7 @@ export class GameView {
           const status = !actor.connected ? " • reconnecting" : downed ? " • downed" : "";
           visual.labelText.data = actor.name + status;
           if (visual.bar) visual.bar.style.width = Math.max(0, actor.hp / actor.maxHp * 100) + "%";
-          const labelHeight = downed ? .88 : actor.kind === "player" || actor.kind === "keeper" ? 2.06 : 1.34;
+          const labelHeight = downed ? .88 : actor.kind === "player" || actor.kind === "keeper" ? 2.06 : actor.kind === "runner" ? 1.79 : 1.34;
           this.project(visual.label, new Vector3(visual.at.x, visual.at.y + labelHeight, visual.at.z));
         }
       }
@@ -707,7 +768,7 @@ export class GameView {
         const amount = effect.time / effect.lasts;
         effect.label.style.opacity = String(1 - amount * .7);
         this.project(effect.label, effect.position.add(new Vector3(0, amount * .65, 0)));
-      } else if (effect.material && effect.time > effect.lasts * .45) {
+      } else if (effect.material && effect.time > effect.lasts * (effect.fadeAt ?? .45)) {
         effect.material.alpha *= Math.max(.42, 1 - dt * 11);
       }
     }

@@ -123,7 +123,8 @@ class TestCourier {
     if (!hostile) { this.send(0, 0); return; }
     const dx = hostile.x - actor.x, dz = hostile.z - actor.z;
     if (hostile.phase === "active" || (hostile.phase === "windup" && (hostile.kind !== "skitter" || hostile.age < 18))) {
-      if (Math.abs(dz) < (hostile.kind === "keeper" ? 1.58 : 1.21) && Math.abs(dx) < 3)
+      const reach = hostile.kind === "runner" ? 3.65 : 3;
+      if (Math.abs(dz) < (hostile.kind === "keeper" ? 1.58 : 1.21) && Math.abs(dx) < reach)
         this.send(0, dz < -.08 ? 1 : dz > .08 ? -1 : actor.z > 0 ? 1 : -1, "dodge");
       else this.send(0, 0);
       return;
@@ -559,6 +560,102 @@ test("Tidegate archive reads only the live channel and shares its recording afte
     }
     first.send("begin");
     await until("replay resets both channels", () => stage(0, "combat") && rooms.every((room) => room.state.readerMask === 0));
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("Dead Line Exchange teaches the Cable Runner and records the crew log for the party", { timeout: 70000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      for (const mission of ["chapter", "night", "return", "terminal"] as const) server.store.reward([id], mission, mission);
+      if (account !== guest) server.store.reward([id], "archive", "archive");
+    }
+    await assert.rejects(guest.sdk.create("mission", { mission: "exchange" }), /Clear Tidegate Signal Archive/);
+    const first = connectHandlers(await alpha.sdk.create("mission", { mission: "exchange" }) as Socket);
+    rooms.push(first);
+    await assert.rejects(guest.sdk.joinById(first.roomId), /Clear Tidegate Signal Archive/);
+    const other = connectHandlers(await beta.sdk.joinById(first.roomId) as Socket);
+    rooms.push(other);
+    await Promise.all([local(first), local(other)]);
+
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const [control] = routeMarkers("exchange", 0);
+    const [crewLog] = routeMarkers("exchange", 2);
+    const stage = (stage: number, status: string) => rooms.every((room) => room.state.stage === stage && room.state.status === status);
+    const events: CombatEvent[][] = [[], []];
+    for (const [index, room] of rooms.entries()) {
+      room.onMessage("combat", (event: CombatEvent) => { events[index].push(event); });
+    }
+    const enemies = () => [...first.state.actors.entries()].filter(([, actor]) => actor.kind !== "player");
+    const readWithRecall = async (courier: TestCourier) => {
+      await until("reader operator stands idle", () => courier.me.phase === "idle");
+      if (courier.me.armed) courier.send(0, 0, "morph");
+      await until("operator recalls their partner", () => !courier.me.armed && courier.me.phase === "idle");
+      courier.room.send("interact");
+    };
+
+    first.send("begin");
+    await until("both clients enter the exchange", () => stage(0, "combat"));
+    const entrance = enemies();
+    assert.deepEqual(entrance.map(([, actor]) => [actor.kind, actor.name]), [["runner", "Cable Runner"]]);
+    const [runnerId] = entrance[0];
+    const runnerDid = (type: CombatEvent["type"]) => events.every((items) =>
+      items.some((event) => event.source === runnerId && event.type === type));
+    await until("both clients receive the Cable Runner tell", () => runnerDid("windup"));
+    const tells = events.map((items) => items.find((event) => event.source === runnerId && event.type === "windup"));
+    assert.ok(tells[0]?.lunge);
+    assert.deepEqual(tells[0].lunge, tells[1]?.lunge);
+    a.send(0, -1, "dodge");
+    b.send(0, 1, "dodge");
+    await until("both clients receive the Cable Runner pounce", () => runnerDid("swing"));
+    await fight([a, b], "signal", 22000);
+
+    const operator = a.me.hp > 0 ? a : b;
+    await operator.go(control.x, control.z);
+    await until("transfer operator stands idle", () => operator.me.phase === "idle");
+    if (!operator.me.armed) operator.send(0, 0, "morph");
+    await until("the transfer operator's weapon is armed", () => operator.me.armed);
+    let blocked = false;
+    operator.room.onMessage("notice", (notice: string) => { blocked ||= notice.includes("Recall your partner"); });
+    operator.room.send("interact");
+    await until("the transfer control requires the companion recalled", () => blocked);
+    assert.ok(stage(0, "signal"));
+    const health = [a.me.hp, b.me.hp];
+    await readWithRecall(operator);
+    await until("the transfer control opens the second encounter", () => stage(1, "combat"));
+    assert.deepEqual(enemies().map(([, actor]) => actor.kind).sort(), ["guard", "runner"]);
+    assert.ok(!first.state.actors.has(runnerId));
+    assert.deepEqual([a.me.hp, b.me.hp], health);
+
+    await fight([a, b], "signal", 26000);
+    await until("both clients can access the crew log", () => stage(2, "signal"));
+    for (const account of [alpha, beta]) assert.equal((await account.profile()).lore.includes("exchange"), false);
+    const reader = a.me.hp > 0 ? a : b;
+    await reader.go(crewLog.x, crewLog.z);
+    await readWithRecall(reader);
+    reader.room.send("interact");
+    await until("the whole party clears the exchange", () => stage(2, "complete"));
+    for (const items of events) {
+      assert.deepEqual(items.filter((event) => event.type === "observe").map((event) => event.source),
+        [operator.room.sessionId, reader.room.sessionId]);
+    }
+    for (const account of [alpha, beta]) {
+      const profile = await account.profile();
+      assert.deepEqual(profile.clears, ["chapter", "night", "return", "terminal", "archive", "exchange"]);
+      assert.deepEqual(profile.lore, ["register", "turnout", "manifest", "archive", "exchange"]);
+      assert.equal(profile.battleXp, 304);
+      assert.equal(profile.bond, 34);
+    }
+    first.send("begin");
+    await until("replay returns to the Cable Runner entrance", () => stage(0, "combat"));
+    assert.deepEqual(enemies().map(([, actor]) => actor.kind), ["runner"]);
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

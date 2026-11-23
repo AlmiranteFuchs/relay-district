@@ -60,6 +60,8 @@ function notify(message: string) {
 }
 
 function story(data: { title: string; text: string }) {
+  window.clearTimeout(noticeTimer);
+  show("toast", false);
   text("story-title", data.title); text("story-text", data.text); show("story", true);
   window.clearTimeout(storyTimer);
   storyTimer = window.setTimeout(() => show("story", false), 24000);
@@ -306,6 +308,9 @@ function signalObjective(world: WorldView) {
   if (world.mission === "archive") return world.stage === 0
     ? "Recall your companion and use the archive console."
     : "Recall your companion and recover the recording at the playback deck.";
+  if (world.mission === "exchange") return world.stage === 0
+    ? "Recall your companion and use the Transfer Control."
+    : "Recall your companion and read the Crew Log.";
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
   if (!world.readerMask) return "Bring your recalled companion to both fare readers.";
@@ -326,6 +331,7 @@ function archiveRouteObjective(world: WorldView) {
 function stationPrompt(world: WorldView, actor: ViewActor) {
   const point = nearestMarker(markers(), actor.x, actor.z);
   if (!point || !actor.hp) return "";
+  if (world.mission === "exchange" && world.status !== "signal") return "";
   if (world.mission === "terminal") {
     const ready = point.readerBit ? !(world.readerMask & point.readerBit) : world.readerMask === TERMINAL_READERS_COMPLETE;
     if (world.status !== "signal" || !ready) return "";
@@ -337,7 +343,7 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
       if (point.readerBit !== (1 << world.wave)) return point.title + " • Waiting for signal";
     }
   }
-  const recall = world.mission === "archive" || world.status === "signal" && (world.mission === "terminal"
+  const recall = world.mission === "archive" || world.status === "signal" && (world.mission === "terminal" || world.mission === "exchange"
     || point.id === "register" || point.id === "signal" && world.mission === "return");
   return recall && actor.armed ? "Q  •  Recall " + actor.companion + " to use the " + point.title : "E  •  " + point.title;
 }
@@ -371,6 +377,8 @@ function updateHUD(actor?: ViewActor) {
       approach: world.mission === "night" ? "Follow the train along Platform 07." : "Read the maintenance log or head down the service lane.",
       combat: world.mission === "watch" ? `Patrol ${world.wave + 1} of 2. Clear the lane.`
         : world.mission === "archive" ? world.stage === 0 ? "Clear the archive entrance." : "Defend the archive while the playback deck spins up."
+        : world.mission === "exchange" ? world.stage === 0 ? "Step off the Cable Runner’s marked line, then strike during recovery."
+          : "Cover the rear lane while the transfer line powers up."
         : world.mission === "training" ? "Arm your companion and practice on the target." : "Clear the lane. Step aside when an enemy winds up.",
       interlude: world.mission === "watch" ? "Second patrol approaching. Recall your companion to recover energy." : "Another group is approaching.",
       route: world.mission === "archive" ? archiveRouteObjective(world) : "Use the blue door marker to enter the relay room.",

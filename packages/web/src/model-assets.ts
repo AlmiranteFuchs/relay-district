@@ -63,7 +63,8 @@ export function instantiateActorModel(scene: Scene, slot: ModelSlot, asset: Mode
   const parts = asset.animation ? new Map<string, TransformNode>() : exported;
 
   for (const [name, part] of parts) {
-    const authoredJoint = /^(torso|head|organism|(arm|elbow|leg|knee|plate)_(near|far))$/.test(name);
+    const authoredJoint = /^(torso|head|organism|(arm|elbow|leg|knee|plate)_(near|far))$/.test(name)
+      || slot === "runner" && /^claw_(near|far)$/.test(name);
     if (authoredJoint && part.rotationQuaternion) {
       part.rotation.copyFrom(part.rotationQuaternion.toEulerAngles());
       part.rotationQuaternion = null;

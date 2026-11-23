@@ -26,12 +26,18 @@ const archiveMarkers: Marker[][] = [
   [],
   [{ id: "archive-recording", x: 8.05, z: 2.35, title: "Tidegate Recording" }],
 ];
+const exchangeMarkers: Marker[][] = [
+  [{ id: "exchange-transfer", x: 6.6, z: 2.8, title: "Transfer Control" }],
+  [],
+  [{ id: "exchange-log", x: 8.35, z: 2.6, title: "Crew Log" }],
+];
 
 export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "night") return [{ id: "register", x: 8.25, z: 2.25, title: "Return Register" }];
   if (mission === "return") return [{ id: "signal", x: 8.25, z: 1.25, title: "Return Signal" }];
   if (mission === "terminal") return terminalMarkers;
   if (mission === "archive") return archiveMarkers[stage] ?? [];
+  if (mission === "exchange") return exchangeMarkers[stage] ?? [];
   if (mission !== "chapter") return [];
   return stage === 0
     ? [

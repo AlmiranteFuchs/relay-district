@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -127,6 +127,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "Mara, 00:12. The twelve passengers made it home. I routed their partners through Dead Line Exchange under a maintenance code. Authority locked the stairs from above. Keep listening for two pulses. The exchange still answers. Your partner taps the reply before the voice on the recording does.",
     hint: "Recover the voice recording inside Tidegate Signal Archive",
   },
+  exchange: {
+    title: "Dead Line Exchange crew log",
+    text: "Mara's crew kept the route alive on current from the river pumps after the city cut the feed. Their tally shows all twelve partners made it through the exchange. Your partner taps the relay rhythm in the margin. The final entry lists Bay 4 at 05:20 and orders the crew to hold the first departure for a courier carrying both halves of a fare.",
+    hint: "Recover the crew log past the transfer control at Dead Line Exchange",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -145,6 +150,10 @@ export const JOBS: Record<Mission, {
   archive: {
     title: "Tidegate Signal Archive", description: "Follow the manifest to Tidegate and recover the last voice message on the return line.",
     clearLore: "archive", requiresChapter: true, prerequisite: "terminal",
+  },
+  exchange: {
+    title: "Dead Line Exchange", description: "Follow Mara's recording to the transfer desk and trace the crew that kept the return route running.",
+    clearLore: "exchange", requiresChapter: true, prerequisite: "archive",
   },
   watch: {
     title: "Terminal Watch",

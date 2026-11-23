@@ -1,7 +1,7 @@
 import type { Family } from "../../shared/src/content.ts";
 
 export const MODEL_SLOTS = ["courier", "moth", "brick", "heron", "boar", "moth-weapon", "brick-weapon",
-  "heron-weapon", "boar-weapon", "skitter", "guard", "keeper"] as const;
+  "heron-weapon", "boar-weapon", "skitter", "guard", "keeper", "runner"] as const;
 export type ModelSlot = (typeof MODEL_SLOTS)[number];
 
 export type CourierClip = "idle" | "armedIdle" | "run" | "armedRun" | "jump" | "dodge" | "hurt" | "down" | "rescue"

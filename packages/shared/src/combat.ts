@@ -14,14 +14,17 @@ const GRAVITY = 19;
 export interface Axes { x: number; z: number }
 export interface Input extends Axes { seq: number; action?: Action }
 export interface Position { x: number; z: number; facing: number }
-export type EnemyKind = "skitter" | "guard" | "keeper" | "dummy";
-export const ENEMY_WINDUP_TICKS = { skitter: 32, guard: 38, keeper: 52, dummy: 1 } as const;
+export type EnemyKind = "skitter" | "guard" | "keeper" | "runner" | "dummy";
+export const ENEMY_WINDUP_TICKS = { skitter: 32, guard: 38, keeper: 52, runner: 36, dummy: 1 } as const;
+export const RUNNER_HIT_RADIUS = .64;
+export const RUNNER_LUNGE_TICKS = 14;
 export interface CombatEvent {
   type: "hit" | "swing" | "windup" | "arm" | "dodge" | "down" | "observe" | "revive" | "clear";
   source: string;
   target?: string;
   damage?: number;
   heavy?: boolean;
+  lunge?: Axes;
   x: number;
   z: number;
 }
@@ -75,7 +78,7 @@ export function rescueDistance(from: Axes, to: Axes) {
 }
 
 export function makeEnemy(id: string, kind: EnemyKind, x: number, z: number, players = 1): Enemy {
-  const base = { skitter: 55, guard: 110, keeper: 280, dummy: 240 }[kind];
+  const base = { skitter: 55, guard: 110, keeper: 280, runner: 72, dummy: 240 }[kind];
   const hp = Math.round(base * (1 + (players - 1) * 0.46));
   return { id, kind, x, z, hp, maxHp: hp, facing: -1, y: 0, vy: 0, phase: "idle",
     ticks: 0, target: "", strikeX: x, strikeZ: z, hit: new Set() };
@@ -255,21 +258,31 @@ export function stepEnemy(
     return;
   }
   if (enemy.y > 0.18) return;
+  const runner = enemy.kind === "runner";
   const size = enemy.kind === "keeper" ? 1.5 : enemy.kind === "guard" ? 1.15 : 1;
   if (enemy.phase === "windup") {
     if (enemy.ticks > 0) return;
     enemy.phase = "active";
-    enemy.ticks = 8;
+    enemy.ticks = runner ? RUNNER_LUNGE_TICKS - 1 : 8;
     enemy.hit.clear();
-    publish(events, "swing", enemy, { heavy: size > 1 });
+    publish(events, "swing", enemy, runner ? { lunge: { x: enemy.strikeX, z: enemy.strikeZ } } : { heavy: size > 1 });
   }
   if (enemy.phase === "active") {
+    if (runner) {
+      // One equal segment of the locked line per active tick, including the windup transition.
+      enemy.x += (enemy.strikeX - enemy.x) / (enemy.ticks + 1);
+      enemy.z += (enemy.strikeZ - enemy.z) / (enemy.ticks + 1);
+    }
     for (const player of players) {
       if (!player.hp || player.y > 0.98 || isInvulnerable(player) || enemy.hit.has(player.id)) continue;
-      const forward = (player.x - enemy.x) * enemy.facing;
-      if (forward < -0.25 || forward > 1.77 * size || Math.abs(player.z - enemy.z) > 0.86 * size) continue;
+      const dx = player.x - enemy.x;
+      const dz = player.z - enemy.z;
+      const forward = dx * enemy.facing;
+      const inRange = runner ? Math.hypot(dx, dz) <= RUNNER_HIT_RADIUS
+        : forward >= -.25 && forward <= 1.77 * size && Math.abs(dz) <= .86 * size;
+      if (!inRange) continue;
       enemy.hit.add(player.id);
-      const damage = Math.min(player.hp, size === 1.5 ? 25 : size === 1.15 ? 21 : 13);
+      const damage = Math.min(player.hp, runner ? 19 : size === 1.5 ? 25 : size === 1.15 ? 21 : 13);
       player.hp -= damage;
       player.stagger = 18;
       player.combo = 0;
@@ -281,31 +294,33 @@ export function stepEnemy(
       publish(events, "hit", enemy, { target: player.id, damage, x: player.x, z: player.z, heavy: size > 1 });
       if (!player.hp) publish(events, "down", player);
     }
-    if (enemy.ticks === 0) { enemy.phase = "recover"; enemy.ticks = size === 1.5 ? 62 : size > 1 ? 45 : 32; }
+    if (enemy.ticks === 0) { enemy.phase = "recover"; enemy.ticks = runner ? 40 : size === 1.5 ? 62 : size > 1 ? 45 : 32; }
     return;
   }
   let nearest: Player | undefined;
-  let distance = Infinity;
+  let bestScore = Infinity;
   for (const player of players) {
     if (!player.hp) continue;
-    const value = Math.hypot(player.x - enemy.x, (player.z - enemy.z) * 1.15);
-    if (value < distance) { nearest = player; distance = value; }
+    const distance = Math.hypot(player.x - enemy.x, (player.z - enemy.z) * 1.15);
+    const score = distance - (runner && !player.armed ? 2.1 : 0);
+    if (score < bestScore) { nearest = player; bestScore = score; }
   }
   if (!nearest) { enemy.phase = "idle"; return; }
   const dx = nearest.x - enemy.x;
   const dz = nearest.z - enemy.z;
   if (Math.abs(dx) > 0.1) enemy.facing = Math.sign(dx);
-  if (Math.abs(dx) <= 1.44 * size && Math.abs(dz) <= 0.65 * size) {
+  const inReach = runner ? Math.hypot(dx, dz) <= 3.4 : Math.abs(dx) <= 1.44 * size && Math.abs(dz) <= .65 * size;
+  if (inReach) {
     if (!canWindUp(nearest.id)) return;
     enemy.phase = "windup";
     enemy.ticks = ENEMY_WINDUP_TICKS[enemy.kind];
     enemy.target = nearest.id;
     enemy.strikeX = nearest.x;
     enemy.strikeZ = nearest.z;
-    publish(events, "windup", enemy, { heavy: size > 1 });
+    publish(events, "windup", enemy, runner ? { lunge: { x: enemy.strikeX, z: enemy.strikeZ } } : { heavy: size > 1 });
     return;
   }
-  const speed = (size > 1 ? 2.35 : 2.95) * DT / Math.max(0.02, Math.hypot(dx, dz));
+  const speed = (runner ? 4.2 : size > 1 ? 2.35 : 2.95) * DT / Math.max(0.02, Math.hypot(dx, dz));
   enemy.phase = "advance";
   enemy.x += dx * speed;
   enemy.z += dz * speed;

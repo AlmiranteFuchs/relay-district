@@ -138,7 +138,9 @@ export class GameRoom extends Room<{ state: GameState }> {
     const view = this.state.actors.get(enemy.id)!;
     Object.assign(view, { x: enemy.x, y: enemy.y, z: enemy.z, facing: enemy.facing, hp: enemy.hp,
       maxHp: enemy.maxHp, phase: enemy.phase, age: enemy.ticks, moving: enemy.phase === "advance",
-      kind: enemy.kind, name: ({ keeper: "Switchkeeper", guard: "Gateback", skitter: "Signal Crawler", dummy: "Practice target" })[enemy.kind] });
+      kind: enemy.kind, name: ({
+        keeper: "Switchkeeper", guard: "Gateback", skitter: "Signal Crawler", runner: "Cable Runner", dummy: "Practice target",
+      })[enemy.kind] });
   }
 
   protected step() {
@@ -248,6 +250,10 @@ const archiveWaves = [
   wave(["skitter", -1.85, -2.3], ["guard", 4.2, 2.1]),
   wave(["keeper", 8, -1.6], ["skitter", -6.3, 2.7]),
 ];
+const exchangeWaves = [
+  wave(["runner", 1.2, -1.25]),
+  wave(["guard", 8.4, -.7], ["runner", -3.8, -.85]),
+];
 const watchWaves = [
   wave(["skitter", -2.5, 2.1], ["guard", 3.8, -1.7]),
   wave(["keeper", 4.5, -.9], ["skitter", -5.8, 2.9]),
@@ -342,6 +348,9 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "archive") {
       this.spawn(archiveWaves[0]);
       this.story(JOBS.archive.title, "The manifest leads to a console sealed under the river wall. Its reader is still warm. Clear the entrance patrol and bring your recalled partner to the console.");
+    } else if (this.mission === "exchange") {
+      this.spawn(exchangeWaves[0]);
+      this.story(JOBS.exchange.title, "Mara's recording leads to the exchange under the river pumps. A Cable Runner is hunting in the entrance. Step across the lane when it coils, then strike while it recovers.");
     } else if (this.mission === "watch") {
       this.spawn(watchWaves[0]);
       this.story(JOBS.watch.title, "Dispatch needs the night crew to keep this platform open. Clear both patrols. If everyone stays on their feet, take a Signal Tag home for your partner.");
@@ -431,6 +440,16 @@ export class MissionRoom extends GameRoom {
       }
       return;
     }
+    if (this.mission === "exchange") {
+      this.state.status = "signal";
+      if (this.state.stage === 0) {
+        this.story("The transfer control", "The junction is clear. Take your recalled partner to the transfer control. It remembers the rhythm from the Tidegate recording.");
+      } else {
+        this.state.stage = 2;
+        this.story("Crew desk clear", "The transfer gate is holding. Recall your partner at the crew desk and recover the log.");
+      }
+      return;
+    }
     if (this.mission === "watch" && this.state.wave === 0) {
       this.state.wave = 1;
       this.state.status = "interlude";
@@ -512,7 +531,7 @@ export class MissionRoom extends GameRoom {
       this.interactTerminal(entry, point);
     } else if (this.mission === "archive") {
       this.interactArchive(entry, point);
-    } else if ((point.id === "signal" || point.id === "register") && this.state.status === "signal") {
+    } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register" || this.mission === "exchange")) {
       this.interactSignal(entry, point);
     } else client.send("notice", "The passage opens when the lane is safe.");
   }
@@ -555,6 +574,10 @@ export class MissionRoom extends GameRoom {
       this.state.wave = 1;
       this.spawn(returnWaves[1]);
       this.story("Return track open", "The turnout throws. Your partner tastes a charge on the rail as a Switchkeeper comes up the open track. Arm again and keep the line clear.");
+    } else if (point.id === "exchange-transfer") {
+      this.state.stage = 1;
+      this.spawn(exchangeWaves[1]);
+      this.story("Transfer accepted", "Your partner sends the pump rhythm down the line. A Gateback is moving in from the gate. Stay close and watch for a Cable Runner hunting anyone who has recalled.");
     } else this.finish();
   }
 

@@ -277,17 +277,22 @@ def portrait(family):
 
 def generate():
     families = ("moth", "brick", "heron", "boar")
+    enemies = {"skitter": 1.38, "guard": 1.65, "keeper": 2.37, "runner": 1.0}
     parser = argparse.ArgumentParser(description="Generate Relay District GLB assets")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--pair", choices=families, help="Export only the creature and weapon GLBs for this family")
+    selection.add_argument("--enemy", choices=enemies, help="Export only this enemy GLB")
     selection.add_argument("--cast", action="store_true", help="Export only the courier and mission enemies")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
     if args.pair:
         creature(args.pair)
         weapon(args.pair)
         return
+    if args.enemy:
+        creature(args.enemy, enemies[args.enemy])
+        return
     courier()
-    for name, size in (("skitter", 1.38), ("guard", 1.65), ("keeper", 2.37)):
+    for name, size in enemies.items():
         creature(name, size)
     if args.cast:
         return

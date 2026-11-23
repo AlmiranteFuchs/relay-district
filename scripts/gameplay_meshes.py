@@ -333,11 +333,69 @@ def switchkeeper(body):
             (.163, sign * .115, -.241, .029, .079), (.252, sign * .114, -.24, .017, .04)], spine, leg)
 
 
-ENEMY_MESHES = {"skitter": signal_crawler, "guard": gateback, "keeper": switchkeeper}
+def cable_runner(body):
+    slate = paint("Runner petrol ceramic", (.24, .38, .43), "shell")
+    insulator = paint("Runner yellowed insulator", (.69, .54, .25), "shell")
+    flesh = paint("Runner braided flex tissue", (.15, .105, .13), "shell")
+    frame = paint("Runner worn graphite", (.12, .158, .18), "shell")
+    aperture = paint("Runner red charge aperture", (.79, .195, .11), "lens", .49)
+
+    sectioned("Raked ceramic carapace", [(-.78, .186, 0, .035, .053), (-.62, .224, 0, .122, .133),
+        (-.4, .246, 0, .226, .196), (-.158, .197, 0, .203, .233), (.064, .111, 0, .144, .169),
+        (.198, .065, 0, .084, .099)], slate, body, axis="forward", sides=12)
+    sectioned("Underslung braided thorax", [(-.64, .113, 0, .047, .068), (-.478, .057, 0, .143, .155),
+        (-.224, .046, 0, .191, .214), (.008, .012, 0, .139, .143), (.205, .008, 0, .104, .104),
+        (.335, -.007, 0, .069, .075)], flesh, body, axis="forward", sides=10)
+    sectioned("Wedge over charge aperture", [(.148, .081, 0, .063, .1), (.238, .048, 0, .126, .142),
+        (.371, .057, 0, .121, .147), (.49, .036, 0, .076, .117), (.57, .028, 0, .04, .061)],
+        frame, body, axis="forward", sides=10, shape=.62)
+    bend("Recessed wraparound charge slit", [(.345, -.145, .041, .011, .024), (.474, -.122, .021, .014, .024),
+        (.566, -.059, .014, .019, .021), (.58, 0, .015, .017, .021), (.566, .059, .014, .018, .021),
+        (.474, .122, .021, .014, .024), (.345, .145, .041, .01, .024)], aperture, body, 6)
+
+    for suffix, sign in (("near", -1), ("far", 1)):
+        # The axes of these pivots stay aligned with the organism for the glTF poses.
+        mantle = joint("plate_" + suffix, (-.047, sign * .158, .179), body)
+        sectioned("Tapered shoulder shutter", [(-.536, .097, sign * .026, .028, .028),
+            (-.394, .16, sign * .067, .097, .079), (-.194, .145, sign * .124, .094, .106),
+            (.012, .085, sign * .126, .091, .102), (.185, .002, sign * .084, .062, .075),
+            (.284, -.055, sign * .047, .014, .026)], insulator, mantle, axis="forward", sides=8)
+        bend("Inset ceramic trim", [(-.415, sign * .117, .128, .018, .023),
+            (-.209, sign * .206, .092, .026, .028), (-.004, sign * .21, .042, .027, .028),
+            (.143, sign * .154, -.018, .016, .023)], slate, mantle, 7)
+        bend("Exposed return cable", [(-.554, sign * .11, .051, .028, .028),
+            (-.681, sign * .199, .187, .04, .038), (-.647, sign * .203, .377, .035, .035),
+            (-.486, sign * .159, .518, .028, .03), (-.309, sign * .127, .454, .026, .023)], flesh, body, 7)
+
+        claw = joint("claw_" + suffix, (.428, sign * .103, .042), body)
+        bend("Jaw tendon collar", [(-.06, 0, 0, .057, .048), (.074, sign * .045, -.019, .074, .053),
+            (.188, sign * .105, -.039, .05, .042)], flesh, claw, 7)
+        lift = .055 if sign < 0 else -.017
+        bend("Split cable hook", [(.048, sign * .057, -.008, .075, .053),
+            (.208, sign * .13, -.046, .068, .064), (.394, sign * .15, -.042 + lift, .045, .07),
+            (.565, sign * .098, -.008 + lift, .036, .05), (.646, sign * .019, .06 + lift, .013, .018),
+            (.636, -sign * .025, .102 + lift, .006, .007)], insulator, claw, 8)
+
+        leg = joint("leg_" + suffix, (-.245, sign * .152, -.112), body)
+        bend("Raised spring thigh", [(0, 0, 0, .11, .091), (.111, sign * .073, -.065, .114, .078),
+            (.218, sign * .125, -.169, .087, .061), (.248, sign * .138, -.244, .057, .055)], slate, leg, 8)
+        bend("Open carbon hock", [(.228, sign * .138, -.217, .058, .064),
+            (.164, sign * .164, -.309, .055, .05), (-.059, sign * .182, -.423, .044, .043),
+            (-.228, sign * .178, -.526, .049, .046), (-.177, sign * .213, -.64, .04, .037),
+            (-.093, sign * .218, -.763, .041, .046)], frame, leg, 8)
+        bend("Planted spring foot", [(-.108, sign * .218, -.737, .045, .048),
+            (-.057, sign * .222, -.783, .064, .049), (.064, sign * .217, -.8, .049, .029),
+            (.185, sign * .184, -.798, .01, .016)], insulator, leg, 8)
+        bend("Rear heel spur", [(-.145, sign * .229, -.689, .035, .03),
+            (-.225, sign * .23, -.708, .03, .021), (-.282, sign * .214, -.754, .006, .008)], slate, leg, 6)
+
+
+ENEMY_MESHES = {"skitter": signal_crawler, "guard": gateback, "keeper": switchkeeper, "runner": cable_runner}
 
 
 def build_enemy(family, size):
     model = joint("creature")
     model.scale = (size,) * 3
-    body = joint("organism", (.015, 0, .37), model)
+    center = (-.04, 0, .94) if family == "runner" else (.015, 0, .37)
+    body = joint("organism", center, model)
     ENEMY_MESHES[family](body)

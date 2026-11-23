@@ -7,7 +7,7 @@ The client reads every actor model from `packages/web/public/models/`. Keep your
 | `courier` | All couriers during gameplay |
 | `moth`, `brick`, `heron`, `boar` | The companion's living model in each form |
 | `moth-weapon`, `brick-weapon`, `heron-weapon`, `boar-weapon` | The held form for each weapon family |
-| `skitter`, `guard`, `keeper` | The Signal Crawler, Gateback, or Switchkeeper. `guard` also supplies the practice target. |
+| `skitter`, `guard`, `keeper`, `runner` | The Signal Crawler, Gateback, Switchkeeper, or Cable Runner. `guard` also supplies the practice target. |
 
 All slots accept `file`, `yawDegrees`, `scale`, and `offset`. The latter is an `[x, y, z]` shift in world units under the actor or weapon mount. The default adjustment is a 180° yaw and scale 1. Try the model facing both directions and use the ground shadow to check foot placement. Keeping the geometry origin at ground level for a standing actor, or where a weapon should be gripped, makes this easier. The renderer falls back to the bundled version if loading or a configured courier clip or socket fails. Look in the browser console for the file and reason.
 
@@ -20,6 +20,8 @@ For a replacement that continues to use the game's existing poses, import the bu
 - The procedural courier uses `torso`, `head`, `arm_near`, `arm_far`, `elbow_near`, `elbow_far`, `leg_near`, `leg_far`, `knee_near`, and `knee_far`. The staff grip also uses a `hand` directly under each elbow.
 - Living forms use `plate_near`, `plate_far`, and `pulse_core` for idle, arm, and rescue motion. The client handles following and forming the weapon.
 - Enemies use `organism`, `leg_near`, `leg_far`, `plate_near`, `plate_far`, `claw_near`, and `claw_far` where present. Check wind-up and recovery in combat with the sound muted.
+
+To rebuild only the bundled Cable Runner with Blender, run `blender -b -t 2 --python scripts/models.py -- --enemy runner` from the repository root.
 
 ## Author a skinned courier in Blender
 
