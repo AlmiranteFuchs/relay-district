@@ -8,7 +8,8 @@ import {
   DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW,
   type DispatchInvitation, type DispatchInviteRequest, type DispatchRecentCrew,
 } from "../../shared/src/dispatch.ts";
-import { annexCaseAction, BELLHOUSE_CALLS, FLOOD_INDEX_BANKS, LIFT_PHASE, nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers,
+import { annexCaseAction, BELLHOUSE_CALLS, FLOOD_INDEX_BANKS, HEARING_ROLL, HEARING_WITNESSES, LIFT_PHASE,
+  nearestMarker, PLAZA, PUMP_LANES, PUMP_PHASE, routeMarkers,
   TERMINAL_READERS_COMPLETE, type BellhouseCue, type IndexScan } from "../../shared/src/scene.ts";
 import { GameView, type ViewActor, type WorldView } from "./view.ts";
 import { GameAudio } from "./audio.ts";
@@ -159,7 +160,7 @@ function attach(next: RelayRoom) {
   setConnection("Online");
   next.onStateChange((incoming) => {
     if (room !== next) return;
-    const oldStatus = world?.status, oldStage = world?.stage, oldLeader = world?.leader;
+    const oldStatus = world?.status, oldStage = world?.stage, oldLeader = world?.leader, oldReaderMask = world?.readerMask;
     const localBefore = world?.actors.get(next.sessionId);
     world = capture(incoming);
     const local = world.actors.get(next.sessionId);
@@ -176,6 +177,8 @@ function attach(next: RelayRoom) {
     } else if (panel === "lobby" && world.status === "lobby") {
       const roster = element("lobby-roster");
       if (roster) roster.textContent = participantText();
+    } else if (panel === "lobby" && world.mission === "hearing" && oldReaderMask !== world.readerMask) {
+      drawPanel();
     }
     if (!oldStatus && world.status === "lobby") openPanel("lobby");
     if (world.status === "failed" && oldStatus !== "failed") openPanel("lobby");
@@ -384,6 +387,14 @@ function crewAssistReport() {
     + "</section>";
 }
 
+function hearingRecord(readerMask: number) {
+  const entries = HEARING_WITNESSES.filter(({ readerBit }) => readerMask & readerBit)
+    .map(({ title, text }) => item(escape(title), escape(text))).join("");
+  return '<section class="panel-grid" aria-labelledby="hearing-record-title">'
+    + '<h2 id="hearing-record-title">Hearing record</h2>'
+    + (entries || '<p class="quiet">Visit the witnesses to collect their accounts.</p>') + '</section>';
+}
+
 function drawPanel() {
   if (!panel || !profile) return;
   let title = "";
@@ -413,6 +424,7 @@ function drawPanel() {
       } else body += button("Resume mission", "resume");
       body += " " + button("Return to plaza", "plaza");
       if (world?.mission === "bayrelay" && world.status === "complete") body += crewAssistReport();
+      if (world?.mission === "hearing" && world.stage > 0) body += hearingRecord(world.readerMask);
     }
   } else if (panel === "room") {
     title = escape(profile.companion) + "’s room";
@@ -508,6 +520,11 @@ function signalObjective(world: WorldView) {
   if (world.mission === "bellhouse") return bellhouseObjective(world);
   if (world.mission === "annex") return annexObjective(world);
   if (world.mission === "flood") return floodObjective(world);
+  if (world.mission === "hearing") {
+    if (world.stage === 2) return "Recall your companion and file the Public Roll.";
+    const heard = HEARING_WITNESSES.filter(({ readerBit }) => world.readerMask & readerBit).length;
+    return `Hear the South Wall records (${heard}/${HEARING_WITNESSES.length}).`;
+  }
   if (world.mission === "bayrelay") return bayRelayObjective(world);
   if (world.mission !== "terminal") return "Inspect the incoming signal at the end of the lane.";
   if (world.readerMask === TERMINAL_READERS_COMPLETE) return "Bring your recalled companion to the manifest at the east end.";
@@ -600,6 +617,14 @@ function stationPrompt(world: WorldView, actor: ViewActor) {
   if (world.mission === "annex") return annexPrompt(world, actor);
   const point = nearestMarker(markers(), actor.x, actor.z);
   if (!point) return "";
+  if (world.mission === "hearing") {
+    if (world.status !== "signal") return "";
+    if (point.readerBit && (world.readerMask & point.readerBit)) return "E  •  Re-read " + point.title;
+    if (actor.armed && (point.id === HEARING_ROLL.id || HEARING_WITNESSES.some(({ id, recalled }) => id === point.id && recalled))) {
+      return "Q  •  Recall " + actor.companion + " for " + point.title;
+    }
+    return point.id === HEARING_ROLL.id ? "E  •  File the Public Roll" : "E  •  " + point.title;
+  }
   if ((world.mission === "exchange" || world.mission === "departure" || world.mission === "viaduct" || world.mission === "pump")
     && world.status !== "signal") return "";
   if (world.mission === "terminal") {

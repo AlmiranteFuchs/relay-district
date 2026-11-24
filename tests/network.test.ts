@@ -9,7 +9,7 @@ import { matchMaker } from "@colyseus/core";
 import { runServer } from "../packages/server/src/http.ts";
 import type { MissionRoom } from "../packages/server/src/rooms.ts";
 import type { GameState, ActorState } from "../packages/server/src/wire.ts";
-import { availableTrinkets, BAY_FOUR_TICKET, BELLHOUSE_SEAL, RELAY_PENNANT, type Action, type Family, type Mission,
+import { availableTrinkets, BAY_FOUR_TICKET, BELLHOUSE_SEAL, LORE, RELAY_PENNANT, type Action, type Family, type Mission,
   type Profile } from "../packages/shared/src/content.ts";
 import { RESCUE_HEALTH, type CombatEvent } from "../packages/shared/src/combat.ts";
 import { COMPANION_PLAY, SIGNAL_COUNT, SIGNAL_PLAYBACK_MS, SIGNAL_ROUND_MS,
@@ -18,7 +18,8 @@ import { DISPATCH_INVITE, DISPATCH_RECENT_CREW, DISPATCH_RECENT_CREW_TTL_MS,
   type DispatchInvitation, type DispatchRecentCrew } from "../packages/shared/src/dispatch.ts";
 import { ANNEX_CASE_HOME, ANNEX_FILING_DESK, ARCHIVE_CHANNELS_COMPLETE, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS, BELLHOUSE_CALLS,
   BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, FLOOD_FOLIO, FLOOD_INDEX_BANKS, FLOOD_INDEX_COMPLETE, FLOOD_SCAN_TICKS,
-  LIFT_LEG_TICKS, LIFT_PHASE, PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE,
+  HEARING_COMPLETE, HEARING_ROLL, HEARING_WITNESSES, LIFT_LEG_TICKS, LIFT_PHASE, PLAZA_ROLL, PUMP_LANES, PUMP_PHASE,
+  PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE,
   type BellhouseCue, VIADUCT_RELAY_TICKS } from "../packages/shared/src/scene.ts";
 
 type Socket = Room<any, GameState>;
@@ -1959,6 +1960,150 @@ test("Flood Index isolates concurrent scans and unlocks the folio only after bot
       assert.deepEqual(profile.lore, [...initial[index].lore, "flood"]);
       assert.deepEqual(profile.clears, [...initial[index].clears, "flood"]);
     }
+  } finally {
+    await Promise.allSettled(rooms.map((room) => room.leave()));
+    await server.stop();
+  }
+});
+
+test("South Wall Hearing shares the witnesses but keeps Public Roll reads private and rewards only once", { timeout: 52000 }, async () => {
+  const server = await runServer({ port: 0, database: ":memory:" });
+  const origin = "http://127.0.0.1:" + server.port;
+  const rooms: Socket[] = [];
+  try {
+    const [alpha, beta, guest] = await Promise.all(["Aster", "Ivo", "Guest"].map((name) => player(origin, name)));
+    const party = [alpha, beta];
+    for (const account of [alpha, beta, guest]) {
+      const { id } = server.store.session(account.sdk.auth.token)!;
+      server.store.reward([id], "chapter-unlock", "chapter");
+      if (account === guest) continue;
+      assert.equal(server.store.morph(id, "brick", "moth").ok, true);
+      server.store.reward([id], "flood-unlock", "flood");
+      server.store.customize(id, { companion: "Tern", trinket: "Copper ribbon", roomTheme: "Moss glass" });
+    }
+    const profiles = () => Promise.all(party.map((account) => account.profile()));
+    const initial = await profiles();
+    for (const profile of initial) {
+      assert.equal(profile.catalyst, false);
+      assert.deepEqual(profile.catalystProgress, ["flood"]);
+    }
+    type Story = { title: string; text: string };
+    const stories = new Map<Socket, Story[]>();
+    const connect = (room: Socket) => {
+      rooms.push(connectHandlers(room));
+      const feed: Story[] = [];
+      stories.set(room, feed);
+      room.onMessage("story", ({ title, text }: Story) => { feed.push({ title, text }); });
+      return room;
+    };
+    const readPrivate = async (reader: TestCourier, peer: TestCourier) => {
+      const feed = stories.get(reader.room)!;
+      const start = feed.length;
+      const peerFeed = stories.get(peer.room)!;
+      const peerStart = peerFeed.length;
+      reader.room.send("interact");
+      const story = await until("the requester receives a private read", () => feed[start]);
+      peer.send(0, 0);
+      await until("the other client receives a post-read patch", () => peer.me.ack === peer.seq);
+      assert.equal(feed.length, start + 1);
+      assert.equal(peerFeed.length, peerStart);
+      return story;
+    };
+    const plaza = connect(await alpha.sdk.joinOrCreate("plaza") as Socket);
+    const bystanderPlaza = connect(await beta.sdk.joinById(plaza.roomId) as Socket);
+    await Promise.all([local(plaza), local(bystanderPlaza)]);
+    const plazaReader = new TestCourier(plaza), bystander = new TestCourier(bystanderPlaza);
+    await plazaReader.go(PLAZA_ROLL.x, PLAZA_ROLL.z);
+    const gated = await readPrivate(plazaReader, bystander);
+    assert.equal(gated.title, PLAZA_ROLL.title);
+    assert.match(gated.text, /awaiting your entry/);
+    assert.deepEqual(await profiles(), initial);
+
+    await assert.rejects(guest.sdk.create("mission", { mission: "hearing" }), /Clear Flood Index/);
+    const first = connect(await alpha.sdk.create("mission", { mission: "hearing" }) as Socket);
+    await assert.rejects(guest.sdk.joinById(first.roomId), /Clear Flood Index/);
+    const other = connect(await beta.sdk.joinById(first.roomId) as Socket);
+    await Promise.all([local(first), local(other)]);
+    const a = new TestCourier(first), b = new TestCourier(other);
+    const peers = [first, other];
+    const [ina, vale, marks] = HEARING_WITNESSES;
+    const phase = (stage: number, status: string, mask: number) => peers.every((room) => room.state.stage === stage
+      && room.state.status === status && room.state.readerMask === mask && room.state.actors.size === 2
+      && [...room.state.actors.values()].every((actor) => actor.kind === "player"));
+    const arm = async (courier: TestCourier) => {
+      await until("the courier stands idle", () => courier.me.phase === "idle");
+      if (!courier.me.armed) courier.send(0, 0, "morph");
+      await until("the courier arms in the hearing room", () => courier.me.armed && courier.me.phase === "idle");
+    };
+    const notices = peers.map((room) => {
+      const feed: string[] = [];
+      room.onMessage("notice", (notice: string) => { feed.push(notice); });
+      return feed;
+    });
+    const denyWhileArmed = async (courier: TestCourier) => {
+      await arm(courier);
+      const feed = notices[peers.indexOf(courier.room)];
+      const start = feed.length;
+      courier.room.send("interact");
+      await until("the station asks for recall", () => feed.slice(start).some((notice) => notice.includes("Recall your partner")));
+    };
+    const attest = async (courier: TestCourier, marker: typeof ina, stage: number, mask: number) => {
+      const starts = peers.map((room) => stories.get(room)!.length);
+      courier.room.send("interact");
+      await until("the witness reaches both couriers", () => phase(stage, "signal", mask) && peers.every((room, index) =>
+        stories.get(room)!.slice(starts[index]).some((story) => story.title === marker.title && story.text === marker.text)));
+    };
+
+    first.send("begin");
+    await until("the hearing starts without enemies", () => phase(1, "signal", 0));
+    await Promise.all([a.go(vale.x, vale.z), b.go(ina.x, ina.z)]);
+    await Promise.all([arm(a), arm(b)]);
+    await attest(a, vale, 1, vale.readerBit);
+    const exhibit = { title: vale.title, text: vale.text };
+    assert.deepEqual(await readPrivate(a, b), exhibit);
+    await attest(b, ina, 1, vale.readerBit | ina.readerBit);
+
+    const partnerSession = other.sessionId;
+    let reconnected = false;
+    other.onReconnect.once(() => { reconnected = true; });
+    other.connection.close(4010, "test drop before Partner Marks");
+    await until("the witness record survives the reconnect", () => reconnected && other.sessionId === partnerSession
+      && first.state.actors.get(partnerSession)?.connected && phase(1, "signal", vale.readerBit | ina.readerBit));
+    await b.go(marks.x, marks.z);
+    await denyWhileArmed(b);
+    assert.ok(phase(1, "signal", vale.readerBit | ina.readerBit));
+    await recallForReader(b);
+    await attest(b, marks, 2, HEARING_COMPLETE);
+    assert.deepEqual(await readPrivate(a, b), exhibit, "the Public Roll stage still permits private witness re-reads");
+    assert.deepEqual(await profiles(), initial);
+
+    await a.go(HEARING_ROLL.x, HEARING_ROLL.z);
+    await recallForReader(a);
+    await denyWhileArmed(a);
+    assert.ok(phase(2, "signal", HEARING_COMPLETE));
+    await recallForReader(a);
+    first.send("interact");
+    first.send("interact");
+    await until("both clients see the roll filed", () => phase(2, "complete", HEARING_COMPLETE));
+    const finished = initial.map((profile) => ({ ...profile, bond: profile.bond + 6, lore: [...profile.lore, "hearing"],
+      clears: [...profile.clears, "hearing"] }));
+    assert.deepEqual(await profiles(), finished);
+
+    first.send("begin");
+    await until("the replay starts without witness credit", () => phase(1, "signal", 0));
+    await Promise.all([a.go(ina.x, ina.z), b.go(marks.x, marks.z)]);
+    await recallForReader(b);
+    await attest(b, marks, 1, marks.readerBit);
+    await attest(a, ina, 1, marks.readerBit | ina.readerBit);
+    await a.go(vale.x, vale.z);
+    await attest(a, vale, 2, HEARING_COMPLETE);
+    await b.go(HEARING_ROLL.x, HEARING_ROLL.z);
+    await recallForReader(b);
+    other.send("interact");
+    await until("both clients see the replay filed", () => phase(2, "complete", HEARING_COMPLETE));
+    const { title, text } = LORE.hearing;
+    assert.deepEqual(await readPrivate(plazaReader, bystander), { title, text });
+    assert.deepEqual(await profiles(), finished);
   } finally {
     await Promise.allSettled(rooms.map((room) => room.leave()));
     await server.stop();

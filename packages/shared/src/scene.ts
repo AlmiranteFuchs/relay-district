@@ -1,11 +1,13 @@
 import { TICK_RATE, type Lore, type Mission } from "./content.ts";
 
 export interface Marker { id: string; x: number; z: number; title: string; lore?: Lore; readerBit?: number }
+export const PLAZA_ROLL: Marker = { id: "public-roll", title: "Public Roll", x: 4.85, z: -2.75 };
 export const PLAZA: Marker[] = [
   { id: "workbench", title: "Morph Workbench", x: -6.7, z: 2.8 },
   { id: "room", title: "Companion Room", x: -1.85, z: 3.1 },
   { id: "plaque", title: "Closure Plaque", x: 2.8, z: 3.1, lore: "plaque" },
   { id: "dispatch", title: "Dispatch", x: 7.25, z: 2.65 },
+  PLAZA_ROLL,
 ];
 
 export const TERMINAL_READERS_COMPLETE = 0b11;
@@ -98,6 +100,17 @@ export const FLOOD_INDEX_BANKS = [
 ] satisfies (Marker & { readerBit: number })[];
 export const FLOOD_FOLIO: Marker = { id: "flood-folio", title: "Flood Folio", x: 8.15, z: 2.55 };
 const floodMarkers: Marker[][] = [[], FLOOD_INDEX_BANKS, FLOOD_INDEX_BANKS, [FLOOD_FOLIO]];
+export const HEARING_WITNESSES = [
+  { id: "hearing-ina", title: "Ina's Testimony", x: -6.9, z: 2.65, readerBit: 0b001, recalled: false,
+    text: "Spindle stayed because it knew the pumps and wanted the shift. We wrote both our names on the card. I still keep the duplicate in my coat. Len and Omi kept theirs too." },
+  { id: "hearing-vale", title: "Vale's Exhibit", x: -.20, z: 2.5, readerBit: 0b010, recalled: false,
+    text: "The Flood Index tracks the same files from the pump hall into Authority storage. The signed Bellhouse sheet matches the original roster. The missing names were removed when the records changed hands." },
+  { id: "hearing-marks", title: "Partner Marks", x: 3.15, z: -2.5, readerBit: 0b100, recalled: true,
+    text: "Your partner touches the reader and gives two short pulses. Each of the three old marks answers in turn. Ina moves the original sheet beside the new roll so the clerk can enter all three names." },
+] satisfies (Marker & { readerBit: number; recalled: boolean; text: string })[];
+export const HEARING_COMPLETE = 0b111;
+export const HEARING_ROLL: Marker = { id: "hearing-roll", title: "Public Roll", x: 8.1, z: 2.55 };
+const hearingMarkers: Marker[][] = [[], HEARING_WITNESSES, [...HEARING_WITNESSES, HEARING_ROLL]];
 export const BAY_RELAY_CALLS_COMPLETE = 0b11;
 export const BAY_RELAY_STAGGER_TICKS = 40;
 const bayRelayMarkers: Marker[] = [
@@ -118,6 +131,7 @@ export function routeMarkers(mission: Mission, stage: number): Marker[] {
   if (mission === "bellhouse") return bellhouseMarkers[stage] ?? [];
   if (mission === "annex") return annexMarkers;
   if (mission === "flood") return floodMarkers[stage] ?? [];
+  if (mission === "hearing") return hearingMarkers[stage] ?? [];
   if (mission === "bayrelay") return bayRelayMarkers;
   if (mission !== "chapter") return [];
   return stage === 0

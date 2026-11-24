@@ -169,11 +169,11 @@ export class Store {
           profile.clears.push(mission);
           profile.bond = Math.min(100, profile.bond + 4);
         }
-        profile.battleXp += mission === "chapter" ? 64 : 48;
+        if (mission !== "hearing") profile.battleXp += mission === "chapter" ? 64 : 48;
         const { reward: discovery, clearLore } = JOBS[mission];
         if (discovery && !profile.discovered.includes(discovery)) profile.discovered.push(discovery);
         if (clearLore) addMemory(profile, clearLore);
-        if (!profile.catalyst) {
+        if (mission !== "hearing" && !profile.catalyst) {
           if (!profile.catalystProgress.includes(mission)) profile.catalystProgress.push(mission);
           if ((first && mission === "chapter") || profile.catalystProgress.length >= MORPH_CLEARS) {
             profile.catalyst = true;

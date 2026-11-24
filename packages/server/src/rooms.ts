@@ -12,7 +12,7 @@ import { DISPATCH_INVITE, DISPATCH_INVITE_LIMIT, DISPATCH_RECENT_CREW, DISPATCH_
   type DispatchInvitation, type DispatchRecentCrew } from "../../shared/src/dispatch.ts";
 import { ANNEX_CASE_HOME, ANNEX_FILING_DESK, annexCaseAction, ARCHIVE_CHANNELS_COMPLETE, ARCHIVE_CHANNEL_TICKS, BAY_RELAY_CALLS_COMPLETE, BAY_RELAY_STAGGER_TICKS,
   BELLHOUSE_CALLS, BELLHOUSE_CALLS_COMPLETE, DEPARTURE_REINFORCEMENT_TICKS, FLOOD_INDEX_BANKS, FLOOD_INDEX_COMPLETE,
-  FLOOD_SCAN_TICKS, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA,
+  FLOOD_SCAN_TICKS, HEARING_COMPLETE, HEARING_ROLL, HEARING_WITNESSES, LIFT_LEG_TICKS, LIFT_PHASE, nearestMarker, PLAZA, PLAZA_ROLL,
   PUMP_LANES, PUMP_PHASE, PUMP_TIMING, routeMarkers, TERMINAL_READERS_COMPLETE, type BellhouseCue, type BellhouseNote,
   VIADUCT_RELAY_TICKS, type Marker } from "../../shared/src/scene.ts";
 import { ActorState, CrewAssistState, GameState, IndexScanState, RosterCaseState } from "./wire.ts";
@@ -361,7 +361,13 @@ export class PlazaRoom extends GameRoom {
     if (!entry) return;
     const point = nearestMarker(PLAZA, entry.player.x, entry.player.z);
     if (!point) return client.send("notice", "Move closer to a plaza station.");
-    if (point.lore) this.observe(entry, point);
+    if (point.id === PLAZA_ROLL.id) {
+      const filed = store.profile(entry.profileId).clears.includes("hearing");
+      client.send("story", filed ? LORE.hearing : {
+        title: PLAZA_ROLL.title, text: "The hearing roll is awaiting your entry. Follow the Flood Index records to the South Wall Hearing in Dispatch.",
+      });
+      if (filed) client.send("combat", { type: "observe", source: entry.player.id, x: point.x, z: point.z });
+    } else if (point.lore) this.observe(entry, point);
     else client.send("panel", point.id);
   }
 }
@@ -604,6 +610,10 @@ export class MissionRoom extends GameRoom {
     } else if (this.mission === "flood") {
       this.spawn(floodWaves[0]);
       this.story(JOBS.flood.title, "Vale's transfer card leads to two readers below the public archive. Clear the lower hall so your partner can match the original crew and transfer records.");
+    } else if (this.mission === "hearing") {
+      this.state.stage = 1;
+      this.state.status = "signal";
+      this.story(JOBS.hearing.title, "Vale has put the Flood Index card on the table. Hear the three records in any order, then bring your recalled partner to the Public Roll.");
     } else if (this.mission === "bayrelay") {
       this.spawn(bayRelayPatrol);
       this.story(JOBS.bayrelay.title, "Dispatch needs both call boxes checked. Use each box with a recalled partner. During combat, each call interrupts the patrol once. Clear the platform to sign off.");
@@ -943,6 +953,8 @@ export class MissionRoom extends GameRoom {
       this.interactBellhouse(entry, point);
     } else if (this.mission === "flood") {
       this.interactFlood(entry, point);
+    } else if (this.mission === "hearing") {
+      this.interactHearing(entry, point);
     } else if (this.mission === "bayrelay") {
       this.interactBayRelay(entry, point);
     } else if (this.state.status === "signal" && (point.id === "signal" || point.id === "register"
@@ -1340,6 +1352,28 @@ export class MissionRoom extends GameRoom {
     this.state.stage = 3;
     this.state.status = "signal";
     this.story("Both entries matched", "The saved records match the Bellhouse roster. Recall your partner at the Flood Folio to take the accession card.");
+  }
+
+  private interactHearing(entry: Entry, point: Marker) {
+    if (this.state.status !== "signal") return;
+    if (point.id === HEARING_ROLL.id) {
+      if (this.state.readerMask === HEARING_COMPLETE && this.hearSignal(entry, point, "Recall your partner with Q first.")) this.finish();
+      return;
+    }
+    const witness = HEARING_WITNESSES.find(({ id }) => id === point.id);
+    if (!witness) return;
+    const { title, text, readerBit, recalled } = witness;
+    if (this.state.readerMask & readerBit) {
+      entry.client.send("story", { title, text });
+      return;
+    }
+    if (recalled && !this.hearSignal(entry, point, "Recall your partner to match the marks.")) return;
+    this.state.readerMask |= readerBit;
+    this.story(title, text);
+    if (this.state.readerMask === HEARING_COMPLETE) {
+      this.state.stage = 2;
+      this.broadcast("notice", "All three records heard. File the Public Roll.");
+    }
   }
 
   private finish() {

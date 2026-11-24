@@ -4,7 +4,7 @@ import {
 } from "@babylonjs/core";
 import { FORMS, TICK_RATE, type Family } from "../../shared/src/content.ts";
 import { ENEMY_WINDUP_TICKS, RUNNER_HIT_RADIUS, RUNNER_LUNGE_TICKS, type CombatEvent } from "../../shared/src/combat.ts";
-import { FLOOD_INDEX_BANKS, FLOOD_SCAN_TICKS, TERMINAL_READERS_COMPLETE, type IndexScan, type Marker, type RosterCase } from "../../shared/src/scene.ts";
+import { FLOOD_INDEX_BANKS, FLOOD_SCAN_TICKS, PLAZA_ROLL, TERMINAL_READERS_COMPLETE, type IndexScan, type Marker, type RosterCase } from "../../shared/src/scene.ts";
 import { MothAnimation } from "./moth-animation.ts";
 import { instantiateActorModel, loadModelAsset, type ActorModel, type ModelAsset } from "./model-assets.ts";
 import { MODEL_SLOTS, type ModelSlot } from "./model-replacements.ts";
@@ -17,6 +17,7 @@ import { PumpScenery } from "./pump-view.ts";
 import { BellhouseScenery } from "./bellhouse-view.ts";
 import { AnnexScenery } from "./annex-view.ts";
 import { FloodIndexScenery } from "./flood-index-view.ts";
+import { HearingScenery } from "./hearing-view.ts";
 
 export interface ViewActor {
   x: number; y: number; z: number; facing: number; name: string; companion: string; family: Family;
@@ -72,7 +73,7 @@ export class GameView {
   private visuals = new Map<string, Visual>();
   private scenery?: TransformNode;
   private missionScenery?: ArchiveScenery | ExchangeScenery | DepartureScenery | ViaductScenery | LiftScenery | PumpScenery
-    | BellhouseScenery | AnnexScenery | FloodIndexScenery;
+    | BellhouseScenery | AnnexScenery | FloodIndexScenery | HearingScenery;
   private place = "";
   private labels = new Map<string, HTMLDivElement>();
   private effects: Effect[] = [];
@@ -280,7 +281,8 @@ export class GameView {
     this.place = id;
     const keepScenery = world.mission === "bellhouse" && this.missionScenery instanceof BellhouseScenery
       || world.mission === "annex" && this.missionScenery instanceof AnnexScenery
-      || world.mission === "flood" && this.missionScenery instanceof FloodIndexScenery;
+      || world.mission === "flood" && this.missionScenery instanceof FloodIndexScenery
+      || world.mission === "hearing" && this.missionScenery instanceof HearingScenery;
     if (!keepScenery) {
       this.scenery?.dispose();
       this.missionScenery?.dispose();
@@ -295,6 +297,10 @@ export class GameView {
     }
     if (keepScenery) return;
     const root = this.scenery = new TransformNode("District architecture", this.scene);
+    if (world.mission === "hearing") {
+      this.missionScenery = new HearingScenery(this.scene, root);
+      return;
+    }
     if (world.mission === "flood") {
       this.missionScenery = new FloodIndexScenery(this.scene, root);
       return;
@@ -410,6 +416,7 @@ export class GameView {
     for (const marker of markers) {
       const terminalStatus = terminal ? this.material(marker.id + " station status", "#b67e4a") : undefined;
       const gate = marker.id === "advance" || marker.id === "signal";
+      const roll = marker.id === PLAZA_ROLL.id;
       const base = gate ? [1.18, 2.17, .30] as const : marker.id === "plaque" ? [.53, .9, .42] as const
         : marker.id === "room" ? [.98, .57, .68] as const : terminal ? [1.34, .08, .78] as const : [1.36, .81, .62] as const;
       this.mesh(marker.id + " pedestal", [...base], [marker.x, base[1] / 2, marker.z], gate || terminal ? inset : counter, root);
@@ -417,6 +424,16 @@ export class GameView {
         const lounge = MeshBuilder.CreateSphere("Companion cushion", { diameter: 1.1, segments: 8 }, this.scene);
         lounge.scaling.set(1.02, .3, .73); lounge.position.set(marker.x, .59, marker.z);
         lounge.material = cyan; lounge.parent = root;
+      } else if (roll) {
+        const paper = this.material("Public Roll ivory sheet", "#d9ceac");
+        const ink = this.material("Public Roll indigo ink", "#375660");
+        const { x, z } = marker;
+        this.mesh("Public Roll plate frame", [1.25, .59, .08], [x, .992, z - .1], chrome, root);
+        this.mesh("Public Roll posted sheet", [1.12, .48, .025], [x, .992, z - .15], paper, root);
+        this.mesh("Public Roll header", [.73, .045, .011], [x, 1.124, z - .17], ink, root);
+        for (const y of [.924, .987, 1.049]) {
+          this.mesh("Public Roll ink row", [.8, .024, .01], [x, y, z - .17], ink, root);
+        }
       } else {
         const display = terminalStatus ?? (marker.id === "plaque" || marker.id === "register" ? amber : cyan);
         this.mesh(marker.id + " glass", gate ? [1.06, .18, .33] : [base[0] * .78, .065, terminal ? .12 : .51],

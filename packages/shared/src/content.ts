@@ -1,7 +1,7 @@
 export type Family = "moth" | "brick" | "heron" | "boar";
-export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex" | "flood" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
+export type Mission = "chapter" | "night" | "return" | "terminal" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex" | "flood" | "hearing" | "bayrelay" | "watch" | "platform" | "transformer" | "training";
 export type Action = "attack" | "skill" | "mastery" | "morph" | "dodge" | "jump";
-export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex" | "flood";
+export type Lore = "plaque" | "log" | "announcement" | "register" | "turnout" | "manifest" | "archive" | "exchange" | "departure" | "viaduct" | "lift" | "pump" | "bellhouse" | "annex" | "flood" | "hearing";
 export const TICK_RATE = 60;
 export const PATCH_MS = 50;
 export const MAX_ENERGY = 100;
@@ -167,6 +167,11 @@ export const LORE: Record<Lore, { title: string; text: string; hint: string }> =
     text: "The crew bank matches the Bellhouse names to the original duty roster. The transfer bank shows where the Authority put their files after the closure. Someone pencilled 'return to owners' across the instruction to hold them indefinitely. Your partner remembers the two-beat call in the margin. Clerk Vale can use both records at the South Wall Hearing, where the crews have asked to read their names aloud.",
     hint: "Scan both banks and read the Flood Folio in the lower archive",
   },
+  hearing: {
+    title: "South Wall public roll",
+    text: "Spindle, Nacre, and Pith are entered under their own names beside Ina, Len, and Omi. Vale accepted the old marks and the crews' accounts. Partner work on the line is voluntary, and both names belong on the duty roster. Your partner taps a mark next to your name on the copy. The roll hangs at Repair Plaza, and the crews are preparing a public test run from Bay 4.",
+    hint: "File the Public Roll after hearing all three records at South Wall",
+  },
 };
 
 export const JOBS: Record<Mission, {
@@ -217,6 +222,10 @@ export const JOBS: Record<Mission, {
   flood: {
     title: "Flood Index", description: "Recover both archive entries with your companion and drive off the Switchkeeper guarding the folio.",
     clearLore: "flood", requiresChapter: true, prerequisite: "annex",
+  },
+  hearing: {
+    title: "South Wall Hearing", description: "Listen to the crews and put the original partner names on the public roll.",
+    clearLore: "hearing", requiresChapter: true, prerequisite: "flood",
   },
   bayrelay: {
     title: "Bay Four Relay",
